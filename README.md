@@ -23,7 +23,15 @@ Workers write code/files directly to the project tree (yolo mode)
 Claude Code reads only the *.summary and *.exitcode files
 ```
 
-The full rationale lives in [`CLAUDE.md`](CLAUDE.md), [`docs/workflow.md`](docs/workflow.md), and [`docs/token-budget.md`](docs/token-budget.md). `CLAUDE.md` is auto-loaded by Claude Code when a session starts in this repo, so the workflow rules are in effect with no further setup.
+Three kinds of workers do the heavy lifting:
+
+| Worker | Purpose | Mode |
+|---|---|---|
+| **Recon** | Read the codebase once and produce a structured map (LAYERS, KEY_MODULES, CONVENTIONS, CHECK_COMMANDS). Replaces Claude reading source files. | read-only |
+| **Implementer** | Do the actual edits. 4–6 in parallel by default. | write |
+| **Reviewer** | Audit the diff after a batch and report BLOCKERS/WARNINGS/NITS. Replaces Claude reading code to verify. | read-only |
+
+Operating guide: [`docs/usage.md`](docs/usage.md). Rules Claude itself follows: [`CLAUDE.md`](CLAUDE.md). Rationale and heuristics: [`docs/workflow.md`](docs/workflow.md), [`docs/token-budget.md`](docs/token-budget.md). `CLAUDE.md` is auto-loaded by Claude Code when a session starts in this repo.
 
 ## Requirements
 
@@ -41,10 +49,13 @@ cd Claude_Conductor
 # Verify environment
 scripts/gc-check.sh
 
-# Run the example batch end-to-end
+# (a) Run the implementer example end-to-end (2 parallel workers)
 scripts/gc-parallel.sh examples/hello-batch --max-parallel 2
-ls examples/hello-batch/output/
 cat examples/hello-batch/*.summary
+
+# (b) Run a recon on this repo and read the structured map
+scripts/gc-recon.sh --out tasks/_recon/recon.md "Recon this repository"
+cat tasks/_recon/recon.md
 ```
 
 Then start Claude Code from this directory:
@@ -53,7 +64,7 @@ Then start Claude Code from this directory:
 claude
 ```
 
-`CLAUDE.md` will be loaded as your standing instructions. Tell Claude something like *"use Conductor mode for the rest of this session"* and proceed normally — Claude will dispatch heavy work to Gemini workers automatically.
+`CLAUDE.md` is auto-loaded. Tell Claude *"use Conductor mode"* and proceed normally — Claude will run recon, dispatch parallel implementers with the recon as context, and run a reviewer between batches, all on its own. See [`docs/usage.md`](docs/usage.md) for the full operator's guide.
 
 ## Using Conductor in another project
 
@@ -88,12 +99,17 @@ Either way, `CLAUDE.md` should be present at the project root so Claude Code pic
 ├── README.md                # This file
 ├── LICENSE                  # MIT
 ├── prompts/
-│   └── worker-preamble.md   # Prepended to every worker prompt
+│   ├── worker-preamble.md   # Implementer worker contract (writes files, returns summary)
+│   ├── recon-preamble.md    # Recon worker contract (read-only project map)
+│   └── reviewer-preamble.md # Reviewer worker contract (read-only diff audit)
 ├── scripts/
 │   ├── gc-parallel.sh       # The dispatcher (main entry point)
+│   ├── gc-recon.sh          # Read-only recon worker
+│   ├── gc-review.sh         # Read-only diff reviewer
 │   ├── gc-dispatch.sh       # One-shot single-worker convenience wrapper
 │   └── gc-check.sh          # Environment sanity check
 ├── docs/
+│   ├── usage.md             # Operator's guide (start here for "how do I drive this")
 │   ├── workflow.md          # Detailed workflow + diagrams
 │   └── token-budget.md      # What to delegate vs. keep in-context
 ├── examples/

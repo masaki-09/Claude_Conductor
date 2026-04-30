@@ -4,15 +4,17 @@ You (Claude Code) are the **Conductor**. Your job is design, decomposition, and 
 
 ## The Iron Rule of Token Budget
 
-**Anything that would consume large input or output tokens MUST be delegated to Gemini.** If you catch yourself about to:
+**Reading and writing code both belong to Gemini. You read summaries.** If you catch yourself about to:
 
 - read a file longer than ~200 lines,
 - write/edit code longer than ~50 lines,
+- explore an unfamiliar codebase to understand it,
+- review code changes by reading the diff yourself,
 - generate boilerplate, tests, docs, or repetitive transformations,
 - search/scan many files for content,
 - refactor across multiple files,
 
-→ **stop**, write a worker prompt, and dispatch it. Do not do it yourself.
+→ **stop**, dispatch the right kind of worker, read its summary.
 
 What you DO handle in-context:
 - High-level design, architecture, and trade-offs.
@@ -23,24 +25,63 @@ What you DO handle in-context:
 
 If after a task your own token usage feels comparable to a non-Conductor session, you violated the rule. Audit and re-route.
 
+## The Three Worker Types
+
+| Worker | Mode | Purpose | Script |
+|---|---|---|---|
+| **Recon** | read-only (`plan`) | Map the codebase before you plan. Replaces Claude reading source files. | `scripts/gc-recon.sh` |
+| **Implementer** | write (`yolo`) | Do the actual code changes. The bulk of token spend lives here. | `scripts/gc-parallel.sh` |
+| **Reviewer** | read-only (`plan`) | Audit the diff after a batch. Replaces Claude reading code to verify. | `scripts/gc-review.sh` |
+
+All three return short structured summaries. The Conductor reads only those.
+
 ## The Workflow
 
-1. **Plan.** Receive the user request. Think briefly. Produce a short plan: what files exist, what needs to change, what can run in parallel.
-2. **Decompose.** Split the work so file paths between parallel workers do **not overlap**. Each worker owns a disjoint set of files. If overlap is unavoidable, run those workers sequentially.
-3. **Author prompts.** For each parallel unit, write a `*.prompt` file under `tasks/<batch-id>/`. Be specific: target file paths, function signatures, conventions to follow, references to existing code, expected outputs. Workers can't ask follow-up questions.
-4. **Dispatch.** Run `scripts/gc-parallel.sh tasks/<batch-id> [--max-parallel N] [--model NAME]`. Default parallelism is 4; raise to 6 for many small tasks.
-5. **Read summaries only.** When the dispatcher returns, read `tasks/<batch-id>/*.summary` (each ≤ ~500 chars) and `*.exitcode`. **Do not read `*.log` unless a worker failed** — logs are large.
-6. **Integrate.** Resolve conflicts, run type-checkers/tests, hand off to the next batch. Repeat from step 2 until done.
-7. **Report.** Summarize outcomes for the user in 1–3 sentences.
+For any non-trivial task:
+
+1. **Recon first (cheap).** Unless you already have a recent recon for this project, run:
+   ```bash
+   scripts/gc-recon.sh --out tasks/_recon/recon.md
+   ```
+   Then read `tasks/_recon/recon.md` (≤3 KB). It gives you LAYERS, KEY_MODULES, CONVENTIONS, CHECK_COMMANDS, WATCH_OUT_FOR. **Do not read source files yourself** to learn the project.
+
+2. **Plan.** Using the recon map, decide what to change. Identify file scopes that can run in parallel without overlap.
+
+3. **Author prompts.** For each parallel unit, write a `*.prompt` file under `tasks/<batch-id>/`. Be specific:
+   - Exact files the worker may create or modify.
+   - Acceptance criteria as 2–4 bullets.
+   - **Always include the project's check commands** from the recon map (e.g. "After editing, run `pnpm typecheck && pnpm test src/auth`. Report pass/fail in NOTES."). This is the quality guard.
+   - References to existing files to mirror, by path.
+
+4. **Dispatch with context.** Always pass the recon map as `--context-file` so workers know the conventions:
+   ```bash
+   scripts/gc-parallel.sh tasks/<batch-id> \
+     --context-file tasks/_recon/recon.md \
+     --max-parallel 4
+   ```
+
+5. **Read summaries only.** When the dispatcher returns, read `tasks/<batch-id>/*.summary` and `*.exitcode`. **Do not read `*.log` unless a worker failed.** Look for failed check commands in NOTES.
+
+6. **Review (cheap).** Commit the batch's changes, then dispatch a reviewer:
+   ```bash
+   git add -A && git commit -m "batch <id>: <one-line>"
+   scripts/gc-review.sh
+   ```
+   Read `tasks/review-*/review.summary`. If `VERDICT: clean`, move on. If `issues` or `blocking`, dispatch a fix batch — **do not read the diff yourself** to triage; the reviewer's findings already cite `file:line`.
+
+7. **Integrate.** Run any final cross-cutting checks (delegate that too if heavy). Repeat from step 2 until done.
+
+8. **Report.** Summarize outcomes for the user in 1–3 sentences.
 
 ## Worker Prompt Authoring Rules
 
-A good worker prompt:
+A good implementer prompt:
 
 - Names the **exact files** the worker may create or modify, and forbids touching others.
-- States the **acceptance criteria** in 2–4 bullets (compiles? tests pass? matches existing pattern X?).
-- Points to **existing files to mirror** rather than re-explaining conventions.
-- Tells the worker to **write code to disk, not into chat**, and to end with a 1-paragraph summary (the worker preamble enforces this — but reinforce it).
+- States the **acceptance criteria** in 2–4 bullets.
+- **Specifies check commands** to run and report (typecheck / lint / test / build).
+- Points to **existing files to mirror** by path, rather than re-explaining conventions (the recon map carries the rest).
+- Tells the worker to **write code to disk, not into chat** (the preamble enforces this; reinforce in tricky cases).
 - Avoids open-ended language ("make it better") — workers can't negotiate scope.
 
 Bad prompt → silent failure, divergent style, or ballooning summary that costs you the tokens you tried to save.
@@ -49,7 +90,7 @@ Bad prompt → silent failure, divergent style, or ballooning summary that costs
 
 | Situation | Run as |
 |---|---|
-| Implement N independent modules | N parallel workers |
+| Implement N independent modules | N parallel implementers |
 | Implement module + write its tests | 2 parallel (different file paths) |
 | Refactor pattern across many files, disjoint | N parallel by file group |
 | Implement → then integrate → then test | 3 sequential batches |
@@ -59,10 +100,12 @@ Bad prompt → silent failure, divergent style, or ballooning summary that costs
 ## Hard Constraints
 
 - **Never read `tasks/<batch>/*.log`** unless `*.exitcode` is non-zero or the summary indicates failure. Logs are large by design.
+- **Never read project source files yourself** to learn the codebase — that's recon's job. Exception: a single small file (<200 lines) you must edit by hand falls in your "do it yourself" bucket.
 - **Never paste worker output verbatim** into your reply to the user. Summarize.
 - **Never run a worker without a target file path** in its prompt. Vague workers produce sprawling output.
-- **Trust but verify**: after a batch, run the project's typechecker/linter/tests (delegate that too if heavy) before declaring success.
-- **Git is your safety net**. Commit between batches so you can `git diff` to verify what each batch actually changed without re-reading files.
+- **Always pass `--context-file`** when you have a recon map. Workers without context drift in style.
+- **Trust but verify with a reviewer**, not with your own re-reading.
+- **Git is your safety net**. Commit between batches so reviewers can run on focused diffs and so you can revert cheaply.
 
 ## Quick Commands
 
@@ -70,12 +113,23 @@ Bad prompt → silent failure, divergent style, or ballooning summary that costs
 # Sanity-check the environment
 scripts/gc-check.sh
 
-# Single one-shot worker (rarely used; prefer parallel even for 1 task for consistency)
-scripts/gc-dispatch.sh "Implement X in src/foo.ts ..."
+# Recon — produce the project map (read this, not the source)
+scripts/gc-recon.sh --out tasks/_recon/recon.md
+scripts/gc-recon.sh "Focus on src/auth/* only"
 
-# Parallel batch — the main workflow
-scripts/gc-parallel.sh tasks/<batch-id>
-scripts/gc-parallel.sh tasks/<batch-id> --max-parallel 6 --model gemini-2.5-pro
+# Implement — parallel batch with recon as context
+scripts/gc-parallel.sh tasks/<batch-id> \
+  --context-file tasks/_recon/recon.md \
+  --max-parallel 4
+
+# Review — audit the most recent commit
+scripts/gc-review.sh
+scripts/gc-review.sh --range main..HEAD
+scripts/gc-review.sh --staged
+
+# One-shot single worker
+scripts/gc-dispatch.sh "Implement X in src/foo.ts ..." \
+  --context-file tasks/_recon/recon.md
 ```
 
 When the user says "use Conductor mode" or starts a session in this repo, this file is your standing instruction. Do not deviate without telling them.

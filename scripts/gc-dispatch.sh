@@ -29,9 +29,9 @@ while [ $# -gt 0 ]; do
     --file)  PROMPT_FILE="$2"; shift 2 ;;
     --stdin) FROM_STDIN=1; shift ;;
     -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
-    --max-parallel|--model|--cwd|--include)
+    --max-parallel|--model|--cwd|--include|--preamble|--context-file|--mode)
       PASSTHROUGH+=("$1" "$2"); shift 2 ;;
-    --no-yolo|--dry-run)
+    --dry-run)
       PASSTHROUGH+=("$1"); shift ;;
     *)
       if [ -z "$PROMPT_TEXT" ] && [ "$FROM_STDIN" -eq 0 ] && [ -z "$PROMPT_FILE" ]; then
@@ -41,6 +41,11 @@ while [ $# -gt 0 ]; do
       fi ;;
   esac
 done
+
+if [ -n "$PROMPT_FILE" ] && [ ! -f "$PROMPT_FILE" ]; then
+  echo "[gc-dispatch] --file not found: $PROMPT_FILE" >&2
+  exit 2
+fi
 
 [ -z "$ID" ] && ID="oneshot-$(date +%Y%m%d-%H%M%S)-$$"
 BATCH_DIR="$REPO_ROOT/tasks/$ID"

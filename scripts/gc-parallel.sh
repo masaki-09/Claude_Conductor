@@ -4,7 +4,9 @@
 # Usage:
 #   scripts/gc-parallel.sh <task-dir> [--max-parallel N] [--model NAME]
 #                                     [--cwd PATH] [--include DIR[,DIR]]
-#                                     [--no-yolo] [--dry-run]
+#                                     [--preamble PATH] [--context-file PATH]
+#                                     [--mode yolo|auto_edit|plan|default]
+#                                     [--dry-run]
 #
 # <task-dir> must contain one or more *.prompt files. Each *.prompt becomes
 # one worker. The basename (without .prompt) is the worker ID.
@@ -15,22 +17,22 @@
 #   <task-dir>/<id>.exitcode   — process exit code as text
 #   <task-dir>/<id>.status     — one-line status (ok|failed|timeout)
 #
+# Each worker's input is built as: <preamble> + <context-file?> + <task body>.
+# This lets recon output be prepended automatically (see scripts/gc-recon.sh).
+#
 # Defaults:
-#   max-parallel = 4   (raise to 6 for many small tasks)
+#   max-parallel = 4
 #   model        = (gemini default; usually gemini-2.5-pro)
-#   yolo         = on  (workers must write files autonomously)
+#   preamble     = prompts/worker-preamble.md
+#   context-file = (none)
+#   mode         = yolo            (use 'plan' for read-only recon/review workers)
 
 set -uo pipefail
 
 # ---------- locate repo root ----------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-PREAMBLE_FILE="$REPO_ROOT/prompts/worker-preamble.md"
-
-if [ ! -f "$PREAMBLE_FILE" ]; then
-  echo "[gc-parallel] ERROR: preamble not found at $PREAMBLE_FILE" >&2
-  exit 2
-fi
+DEFAULT_PREAMBLE="$REPO_ROOT/prompts/worker-preamble.md"
 
 # ---------- parse args ----------
 TASK_DIR=""
@@ -38,7 +40,9 @@ MAX_PARALLEL=4
 MODEL=""
 WORKER_CWD=""
 INCLUDE_DIRS=""
-YOLO=1
+PREAMBLE_FILE=""
+CONTEXT_FILE=""
+MODE="yolo"
 DRY_RUN=0
 
 while [ $# -gt 0 ]; do
@@ -47,10 +51,12 @@ while [ $# -gt 0 ]; do
     --model)        MODEL="$2"; shift 2 ;;
     --cwd)          WORKER_CWD="$2"; shift 2 ;;
     --include)      INCLUDE_DIRS="$2"; shift 2 ;;
-    --no-yolo)      YOLO=0; shift ;;
+    --preamble)     PREAMBLE_FILE="$2"; shift 2 ;;
+    --context-file) CONTEXT_FILE="$2"; shift 2 ;;
+    --mode)         MODE="$2"; shift 2 ;;
     --dry-run)      DRY_RUN=1; shift ;;
     -h|--help)
-      sed -n '2,20p' "$0"; exit 0 ;;
+      sed -n '2,28p' "$0"; exit 0 ;;
     -*)
       echo "[gc-parallel] unknown flag: $1" >&2; exit 2 ;;
     *)
@@ -61,6 +67,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+[ -z "$PREAMBLE_FILE" ] && PREAMBLE_FILE="$DEFAULT_PREAMBLE"
+
 if [ -z "$TASK_DIR" ]; then
   echo "[gc-parallel] usage: $0 <task-dir> [opts]" >&2
   exit 2
@@ -69,6 +77,18 @@ if [ ! -d "$TASK_DIR" ]; then
   echo "[gc-parallel] task dir not found: $TASK_DIR" >&2
   exit 2
 fi
+if [ ! -f "$PREAMBLE_FILE" ]; then
+  echo "[gc-parallel] preamble not found: $PREAMBLE_FILE" >&2
+  exit 2
+fi
+if [ -n "$CONTEXT_FILE" ] && [ ! -f "$CONTEXT_FILE" ]; then
+  echo "[gc-parallel] context file not found: $CONTEXT_FILE" >&2
+  exit 2
+fi
+case "$MODE" in
+  yolo|auto_edit|plan|default) ;;
+  *) echo "[gc-parallel] invalid --mode: $MODE (yolo|auto_edit|plan|default)" >&2; exit 2 ;;
+esac
 
 # Cap parallelism to a sane range
 if [ "$MAX_PARALLEL" -lt 1 ]; then MAX_PARALLEL=1; fi
@@ -86,7 +106,7 @@ if [ "${#PROMPT_FILES[@]}" -eq 0 ]; then
 fi
 
 echo "[gc-parallel] batch: $TASK_DIR"
-echo "[gc-parallel] workers: ${#PROMPT_FILES[@]}, max-parallel: $MAX_PARALLEL${MODEL:+, model: $MODEL}${WORKER_CWD:+, cwd: $WORKER_CWD}"
+echo "[gc-parallel] workers: ${#PROMPT_FILES[@]}, max-parallel: $MAX_PARALLEL, mode: $MODE${MODEL:+, model: $MODEL}${WORKER_CWD:+, cwd: $WORKER_CWD}${CONTEXT_FILE:+, context: $CONTEXT_FILE}"
 
 if [ "$DRY_RUN" -eq 1 ]; then
   for f in "${PROMPT_FILES[@]}"; do echo "  would dispatch: $(basename "$f")"; done
@@ -102,21 +122,27 @@ run_worker() {
   local exitcode_file="$TASK_DIR/$id.exitcode"
   local status_file="$TASK_DIR/$id.status"
 
-  # Build full prompt: preamble + task body
-  local combined
-  combined="$(mktemp)"
+  # Build full prompt: preamble + (optional) context + task body
+  local combined; combined="$(mktemp)"
   {
     cat "$PREAMBLE_FILE"
     echo
-    echo "# TASK ID: $id"
+    if [ -n "$CONTEXT_FILE" ]; then
+      echo "## Project context (from recon)"
+      echo
+      cat "$CONTEXT_FILE"
+      echo
+    fi
+    echo "## Task"
+    echo
+    echo "TASK ID: $id"
     echo
     cat "$prompt_file"
   } > "$combined"
 
   # Build gemini command
-  local gemini_args=(-p "" -o text --skip-trust)
+  local gemini_args=(-p "" -o text --skip-trust --approval-mode "$MODE")
   if [ -n "$MODEL" ];        then gemini_args+=(-m "$MODEL"); fi
-  if [ "$YOLO" -eq 1 ];      then gemini_args+=(--approval-mode yolo); fi
   if [ -n "$INCLUDE_DIRS" ]; then gemini_args+=(--include-directories "$INCLUDE_DIRS"); fi
 
   local pushd_dir="${WORKER_CWD:-$PWD}"
@@ -125,33 +151,33 @@ run_worker() {
   local rc=0
   (
     cd "$pushd_dir" || exit 99
-    cat "$combined" | gemini "${gemini_args[@]}"
+    gemini "${gemini_args[@]}" < "$combined"
   ) > "$log_file" 2>&1 || rc=$?
 
   rm -f "$combined"
   echo "$rc" > "$exitcode_file"
 
-  # Extract summary: prefer the STATUS:/FILES:/NOTES: block emitted by the
-  # worker preamble; fall back to the tail of the log if the marker is absent.
-  if grep -nE '^STATUS:[[:space:]]' "$log_file" > /dev/null 2>&1; then
-    awk '/^STATUS:[[:space:]]/{p=1} p{print}' "$log_file" | tail -c 4096 > "$summary_file"
+  # Extract summary: prefer the marker block emitted by the preamble.
+  # Implementers/recon use STATUS:; reviewer uses VERDICT:. Accept either.
+  if grep -nE '^(STATUS|VERDICT):[[:space:]]' "$log_file" > /dev/null 2>&1; then
+    awk '/^(STATUS|VERDICT):[[:space:]]/{p=1} p{print}' "$log_file" | tail -c 4096 > "$summary_file"
   else
     {
-      echo "STATUS: unknown (no STATUS marker in worker output)"
+      echo "STATUS: unknown (no STATUS/VERDICT marker in worker output)"
       echo "--- log tail ---"
       tail -n 30 "$log_file"
     } > "$summary_file"
   fi
 
   if [ "$rc" -eq 0 ]; then
-    if grep -qE '^STATUS:[[:space:]]*ok' "$summary_file"; then
-      echo "ok" > "$status_file"
-    elif grep -qE '^STATUS:[[:space:]]*partial' "$summary_file"; then
-      echo "partial" > "$status_file"
-    elif grep -qE '^STATUS:[[:space:]]*failed' "$summary_file"; then
-      echo "failed" > "$status_file"
-    else
-      echo "unknown" > "$status_file"
+    # Map both schemas onto a single status vocabulary: ok / partial / failed.
+    if   grep -qE '^STATUS:[[:space:]]*ok'        "$summary_file"; then echo "ok"      > "$status_file"
+    elif grep -qE '^VERDICT:[[:space:]]*clean'    "$summary_file"; then echo "ok"      > "$status_file"
+    elif grep -qE '^STATUS:[[:space:]]*partial'   "$summary_file"; then echo "partial" > "$status_file"
+    elif grep -qE '^VERDICT:[[:space:]]*issues'   "$summary_file"; then echo "partial" > "$status_file"
+    elif grep -qE '^STATUS:[[:space:]]*failed'    "$summary_file"; then echo "failed"  > "$status_file"
+    elif grep -qE '^VERDICT:[[:space:]]*blocking' "$summary_file"; then echo "failed"  > "$status_file"
+    else echo "unknown" > "$status_file"
     fi
   else
     echo "failed (exit=$rc)" > "$status_file"

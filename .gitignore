@@ -1,12 +1,14 @@
-# Ephemeral worker artifacts
-*.log
-*.summary
-*.exitcode
-*.status
+# Ephemeral worker artifacts — everything under tasks/ is per-run state.
+/tasks/*
+!/tasks/.gitkeep
 /logs/
 
 # Example batch outputs (regenerated on every run)
-/examples/hello-batch/output/
+/examples/*/output/
+/examples/**/*.log
+/examples/**/*.summary
+/examples/**/*.exitcode
+/examples/**/*.status
 
 # Editor / OS
 .DS_Store
@@ -19,3 +21,6 @@ Thumbs.db
 .env
 .env.local
 *.local
+
+# Claude Code local state
+.claude/
