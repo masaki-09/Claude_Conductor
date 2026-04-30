@@ -1,0 +1,9 @@
+Create the file `examples/hello-batch/output/license-blurb.md` with a short
+explainer (under 10 lines) of why this project uses the MIT License and what
+that means for downstream users in plain English.
+
+Constraints:
+  - You may ONLY create `examples/hello-batch/output/license-blurb.md`.
+  - Do not modify any other file.
+  - Do not give legal advice; describe the practical effect only.
+  - Final response must follow the STATUS/FILES/NOTES summary format.

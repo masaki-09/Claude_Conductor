@@ -1,0 +1,13 @@
+Create the file `examples/hello-batch/output/readme-from-worker.md` with a 3-paragraph
+introduction to "Claude Conductor". The intro should briefly explain:
+
+  1. What Claude Conductor is (a pattern that combines Claude Code's reasoning
+     with Gemini CLI's cheap throughput by parallel-dispatching workers).
+  2. Why this is more token-efficient than letting Claude Code write everything.
+  3. Who it's for (developers running long agentic sessions on Claude Code).
+
+Constraints:
+  - You may ONLY create the file at `examples/hello-batch/output/readme-from-worker.md`.
+  - Do NOT modify any other file in the repo.
+  - Match a calm, factual tone. No marketing fluff. No emoji.
+  - Final response must follow the STATUS/FILES/NOTES summary format.

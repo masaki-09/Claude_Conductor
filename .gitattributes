@@ -1,0 +1,13 @@
+# Default: let git handle line endings.
+* text=auto
+
+# Shell scripts must use LF, regardless of host OS, or they break on Linux/macOS.
+*.sh           text eol=lf
+scripts/*      text eol=lf
+
+# Text content — keep LF in repo for consistency.
+*.md           text eol=lf
+*.prompt       text eol=lf
+LICENSE        text eol=lf
+.gitignore     text eol=lf
+.gitattributes text eol=lf

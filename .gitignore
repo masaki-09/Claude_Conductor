@@ -1,0 +1,21 @@
+# Ephemeral worker artifacts
+*.log
+*.summary
+*.exitcode
+*.status
+/logs/
+
+# Example batch outputs (regenerated on every run)
+/examples/hello-batch/output/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# Local-only overrides
+.env
+.env.local
+*.local
