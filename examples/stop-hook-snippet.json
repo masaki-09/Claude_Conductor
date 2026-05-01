@@ -1,0 +1,16 @@
+{
+  "_comment": "Claude Conductor — Stop-hook checkpoint. Paste under your existing top-level keys, merging the 'hooks' object if you already have one. Replace <REPO_ROOT> with the absolute path to your Claude_Conductor checkout.",
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "<REPO_ROOT>/scripts/gc-checkpoint.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -43,6 +43,8 @@ set -uo pipefail
 # ---------- locate repo root ----------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=../lib/log-event.sh
+. "$REPO_ROOT/lib/log-event.sh" 2>/dev/null || true
 DEFAULT_PREAMBLE="$REPO_ROOT/prompts/worker-preamble.md"
 
 # ---------- parse args ----------
@@ -123,6 +125,15 @@ if [ "${#PROMPT_FILES[@]}" -eq 0 ]; then
 fi
 
 echo "[gc-parallel] batch: $TASK_DIR"
+gc_log_event batch_start \
+  batch_id="$(basename "$TASK_DIR")" \
+  task_dir="$TASK_DIR" \
+  workers="${#PROMPT_FILES[@]}" \
+  max_parallel="$MAX_PARALLEL" \
+  model="$MODEL" \
+  mode="$MODE" \
+  retries="$RETRIES" \
+  fallback_model="${FALLBACK_MODEL:-none}"
 echo "[gc-parallel] workers: ${#PROMPT_FILES[@]}, max-parallel: $MAX_PARALLEL, mode: $MODE${MODEL:+, model: $MODEL}${WORKER_CWD:+, cwd: $WORKER_CWD}${CONTEXT_FILE:+, context: $CONTEXT_FILE}"
 
 if [ "$DRY_RUN" -eq 1 ]; then
@@ -150,6 +161,7 @@ run_worker() {
 
   # Build full prompt: preamble + (optional) context + task body
   local combined; combined="$(mktemp)"
+  trap 'rm -f "$combined"' RETURN INT TERM EXIT
   {
     cat "$effective_preamble"
     echo
@@ -372,13 +384,29 @@ with open(os.path.join(task_dir, '_batch.usage.json'), 'w', encoding='utf-8') as
 
 echo
 echo "[gc-parallel] batch complete: $TASK_DIR"
+ok_count=0
+partial_count=0
 fail_count=0
 for f in "${PROMPT_FILES[@]}"; do
   id="$(basename "$f" .prompt)"
   status="$(cat "$TASK_DIR/$id.status" 2>/dev/null || echo unknown)"
   printf "  %-30s %s\n" "$id" "$status"
-  case "$status" in ok) ;; *) fail_count=$((fail_count + 1)) ;; esac
+  case "$status" in
+    ok|ok-fallback) ok_count=$((ok_count + 1)) ;;
+    partial|partial-fallback)
+      partial_count=$((partial_count + 1))
+      fail_count=$((fail_count + 1))
+      ;;
+    *) fail_count=$((fail_count + 1)) ;;
+  esac
 done
+
+gc_log_event batch_end \
+  batch_id="$(basename "$TASK_DIR")" \
+  exit="$fail_count" \
+  ok="$ok_count" \
+  partial="$partial_count" \
+  failed="$fail_count"
 
 if [ "$fail_count" -gt 0 ]; then
   echo "[gc-parallel] $fail_count worker(s) not ok — inspect the corresponding *.summary and only fall back to *.log if needed." >&2

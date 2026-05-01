@@ -41,6 +41,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+. "$REPO_ROOT/lib/log-event.sh" 2>/dev/null || true
 PROMPTS_DIR="$REPO_ROOT/prompts"
 
 # ---------- defaults ----------
@@ -127,6 +128,13 @@ done
 if [ "${#ASPECT_LIST[@]}" -eq 0 ]; then
   echo "[gc-review] no aspects specified" >&2; exit 2
 fi
+
+gc_log_event review_start \
+  aspects="$ASPECTS" \
+  range="${RANGE:-HEAD~1..HEAD}" \
+  staged="$STAGED" \
+  until_clean="$UNTIL_CLEAN" \
+  model="$REVIEWER_MODEL"
 
 # ---------- build review scope description ----------
 build_scope_description() {
@@ -297,6 +305,7 @@ build_fix_prompt() {
 run_autofix() {
   local review_batch="$1"
   local iter="$2"
+  gc_log_event autofix_start iter="$iter"
   local fix_id="autofix-$(date +%Y%m%d-%H%M%S)-iter${iter}-$$"
   local fix_dir="$REPO_ROOT/tasks/$fix_id"
   mkdir -p "$fix_dir"
@@ -317,6 +326,7 @@ run_autofix() {
 
   if [ $rc -ne 0 ]; then
     echo "[gc-review] autofix worker failed (rc=$rc); aborting loop" >&2
+    gc_log_event autofix_end iter="$iter" exit="$rc"
     return 1
   fi
 
@@ -333,9 +343,16 @@ run_autofix() {
     git add -A
     git commit -m "${COMMIT_PREFIX} iter ${iter}: address review feedback" \
                -m "${first_block}" >/dev/null
-  ) || return 1
+  )
+  rc=$?
+
+  if [ $rc -ne 0 ]; then
+    gc_log_event autofix_end iter="$iter" exit="$rc"
+    return 1
+  fi
 
   echo "[gc-review] autofix iter $iter: committed."
+  gc_log_event autofix_end iter="$iter" exit=0
   return 0
 }
 
@@ -361,9 +378,11 @@ echo "[gc-review] read summaries at: $review_batch/<aspect>.summary"
 
 if [ "$UNTIL_CLEAN" -ne 1 ]; then
   case "$verdict" in
-    clean) exit 0 ;;
-    *)     exit 1 ;;
+    clean) rc=0 ;;
+    *)     rc=1 ;;
   esac
+  gc_log_event review_end aspects="$ASPECTS" verdict="$verdict" exit="$rc"
+  exit "$rc"
 fi
 
 # ---------- --until-clean autoloop ----------
@@ -373,6 +392,7 @@ while [ "$verdict" != "clean" ] && [ "$iter" -le "$MAX_ITERS" ]; do
   echo "[gc-review] autoloop: iter $iter / $MAX_ITERS  (current verdict: $verdict)"
   if ! run_autofix "$review_batch" "$iter"; then
     echo "[gc-review] autoloop aborted at iter $iter" >&2
+    gc_log_event review_end aspects="$ASPECTS" verdict="$verdict" exit=1
     exit 1
   fi
   # Re-review (scope auto-shifts since HEAD advanced; HEAD~1..HEAD stays current commit)
@@ -386,8 +406,10 @@ done
 
 if [ "$verdict" = "clean" ]; then
   echo "[gc-review] autoloop converged: clean after $((iter - 1)) iteration(s)."
+  gc_log_event review_end aspects="$ASPECTS" verdict="$verdict" exit=0
   exit 0
 else
   echo "[gc-review] autoloop did not converge after $MAX_ITERS iteration(s); last verdict: $verdict" >&2
+  gc_log_event review_end aspects="$ASPECTS" verdict="$verdict" exit=1
   exit 1
 fi

@@ -20,6 +20,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+. "$REPO_ROOT/lib/log-event.sh" 2>/dev/null || true
 PREAMBLE="$REPO_ROOT/prompts/recon-preamble.md"
 
 OUT_PATH=""
@@ -53,6 +54,10 @@ if [ -n "$PROMPT_FILE" ] && [ ! -f "$PROMPT_FILE" ]; then
 fi
 
 ID="recon-$(date +%Y%m%d-%H%M%S)-$$"
+gc_log_event recon_start \
+  batch_id="$ID" \
+  out_path="${OUT_PATH:-none}" \
+  model="$RECON_MODEL"
 BATCH_DIR="$REPO_ROOT/tasks/$ID"
 mkdir -p "$BATCH_DIR"
 
@@ -87,4 +92,10 @@ fi
 if [ $rc -eq 0 ]; then
   echo "[gc-recon] done. Read: $BATCH_DIR/recon.summary"
 fi
+
+gc_log_event recon_end \
+  batch_id="$ID" \
+  exit="$rc" \
+  out_path="${OUT_PATH:-none}"
+
 exit $rc

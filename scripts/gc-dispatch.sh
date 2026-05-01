@@ -17,6 +17,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+. "$REPO_ROOT/lib/log-event.sh" 2>/dev/null || true
 
 ID=""
 PROMPT_FILE=""
@@ -49,6 +50,7 @@ if [ -n "$PROMPT_FILE" ] && [ ! -f "$PROMPT_FILE" ]; then
 fi
 
 [ -z "$ID" ] && ID="oneshot-$(date +%Y%m%d-%H%M%S)-$$"
+gc_log_event dispatch_start id="$ID"
 BATCH_DIR="$REPO_ROOT/tasks/$ID"
 mkdir -p "$BATCH_DIR"
 
@@ -65,4 +67,7 @@ else
 fi
 
 echo "[gc-dispatch] batch dir: $BATCH_DIR"
-exec "$SCRIPT_DIR/gc-parallel.sh" "$BATCH_DIR" "${PASSTHROUGH[@]}"
+"$SCRIPT_DIR/gc-parallel.sh" "$BATCH_DIR" "${PASSTHROUGH[@]}"
+rc=$?
+gc_log_event dispatch_end id="$ID" exit="$rc"
+exit "$rc"
