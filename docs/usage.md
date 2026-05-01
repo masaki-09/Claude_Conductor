@@ -119,9 +119,12 @@ scripts/gc-parallel.sh tasks/rl-001 \
 # Step 4: Claude reads only *.summary (≤500 chars each), commits
 git add -A && git commit -m "rate-limiter: token-bucket middleware + tests"
 
-# Step 5: review
-scripts/gc-review.sh
-# → review.summary lists any BLOCKERS / WARNINGS
+# Step 5: review (autoloop variant — review → autofix → re-review until clean)
+scripts/gc-review.sh --aspects general,security,perf --until-clean \
+  --check-cmd "pnpm tsc && pnpm vitest src/middleware/rateLimit.test.ts" \
+  --max-iters 3
+# → tasks/review-*/<aspect>.summary lists per-perspective BLOCKERS / WARNINGS
+# → if any aspect is non-clean, an autofix iteration runs automatically
 
 # Step 6: clean → done. Claude reports a 1–3 sentence summary to you.
 ```
@@ -161,10 +164,12 @@ scripts/gc-review.sh --staged
 | Knob | Where | When to touch |
 |---|---|---|
 | `--max-parallel N` | `gc-parallel.sh` | Default 4. Raise to 6 for many small tasks; lower to 2 if your machine or rate limits suffer. |
-| `--model gemini-2.5-pro` | any dispatcher | Default is gemini's default. Pin a model when you need reproducibility. |
+| `--model NAME` | any dispatcher | Defaults: implementer=`gemini-3-flash` (cheap, fast), recon/review=`gemini-3.1-pro` (accurate). Override per-call. |
 | `--include path1,path2` | any dispatcher | Add directories outside cwd to the worker's reachable workspace. |
-| `--cwd path` | `gc-parallel.sh` | Run workers in a different project root. Useful for monorepos. |
+| `--cwd path` | any dispatcher | Run workers in a different project root. Useful for monorepos or sandbox demos. |
 | `--context-file path` | `gc-parallel.sh` | Path to recon map. **Always set this** for implementer batches. |
+| `--aspects <list>` | `gc-review.sh` | Comma list of `general`, `security`, `perf`, `api`, or `all`. Each aspect runs as its own parallel reviewer. Default is `general`. |
+| `--until-clean` | `gc-review.sh` | Autoloop: after a non-clean review, dispatch a fix worker, commit, re-review. Stops when clean or `--max-iters` (default 3) is hit. Pair with `--check-cmd` so the fixer self-validates. |
 
 ## 6. Troubleshooting
 

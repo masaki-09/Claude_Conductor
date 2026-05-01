@@ -23,13 +23,15 @@ Workers write code/files directly to the project tree (yolo mode)
 Claude Code reads only the *.summary and *.exitcode files
 ```
 
-Three kinds of workers do the heavy lifting:
+Three kinds of workers do the heavy lifting, with model selection tuned to each role:
 
-| Worker | Purpose | Mode |
-|---|---|---|
-| **Recon** | Read the codebase once and produce a structured map (LAYERS, KEY_MODULES, CONVENTIONS, CHECK_COMMANDS). Replaces Claude reading source files. | read-only |
-| **Implementer** | Do the actual edits. 4–6 in parallel by default. | write |
-| **Reviewer** | Audit the diff after a batch and report BLOCKERS/WARNINGS/NITS. Replaces Claude reading code to verify. | read-only |
+| Worker | Purpose | Mode | Default model |
+|---|---|---|---|
+| **Recon** | Read the codebase once and produce a structured map (LAYERS, KEY_MODULES, CONVENTIONS, CHECK_COMMANDS). Replaces Claude reading source files. | read-only | `gemini-3.1-pro` |
+| **Implementer** | Do the actual edits. 4–6 in parallel by default. | write | `gemini-3-flash` |
+| **Reviewer** | Audit the diff after a batch and report BLOCKERS/WARNINGS/NITS. Replaces Claude reading code to verify. | read-only | `gemini-3.1-pro` |
+
+Reviewers come in **four perspectives**: `general`, `security`, `perf`, `api`. Run them alone or all-at-once with `--aspects all`. With `--until-clean`, the reviewer can also drive an autoloop: review → auto-dispatch a fix worker → re-review, repeating until clean or `--max-iters` (default 3) is hit.
 
 Operating guide: [`docs/usage.md`](docs/usage.md). Rules Claude itself follows: [`CLAUDE.md`](CLAUDE.md). Rationale and heuristics: [`docs/workflow.md`](docs/workflow.md), [`docs/token-budget.md`](docs/token-budget.md). `CLAUDE.md` is auto-loaded by Claude Code when a session starts in this repo.
 

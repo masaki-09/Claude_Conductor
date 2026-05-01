@@ -22,8 +22,10 @@
 #
 # Defaults:
 #   max-parallel = 4
-#   model        = (gemini default; usually gemini-2.5-pro)
+#   model        = gemini-3-flash  (implementer default; recon/review override to pro)
 #   preamble     = prompts/worker-preamble.md
+#                  (per-worker override: if <id>.preamble.md sits next to <id>.prompt
+#                   it wins for that worker only — used by --aspects review)
 #   context-file = (none)
 #   mode         = yolo            (use 'plan' for read-only recon/review workers)
 
@@ -37,7 +39,7 @@ DEFAULT_PREAMBLE="$REPO_ROOT/prompts/worker-preamble.md"
 # ---------- parse args ----------
 TASK_DIR=""
 MAX_PARALLEL=4
-MODEL=""
+MODEL="gemini-3-flash"
 WORKER_CWD=""
 INCLUDE_DIRS=""
 PREAMBLE_FILE=""
@@ -122,10 +124,19 @@ run_worker() {
   local exitcode_file="$TASK_DIR/$id.exitcode"
   local status_file="$TASK_DIR/$id.status"
 
+  # Per-worker preamble override: if a sibling <id>.preamble.md exists, use it
+  # instead of the global preamble. Used by gc-review.sh --aspects to give each
+  # aspect-reviewer its own contract within a single batch.
+  local effective_preamble="$PREAMBLE_FILE"
+  local per_prompt_preamble="${prompt_file%.prompt}.preamble.md"
+  if [ -f "$per_prompt_preamble" ]; then
+    effective_preamble="$per_prompt_preamble"
+  fi
+
   # Build full prompt: preamble + (optional) context + task body
   local combined; combined="$(mktemp)"
   {
-    cat "$PREAMBLE_FILE"
+    cat "$effective_preamble"
     echo
     if [ -n "$CONTEXT_FILE" ]; then
       echo "## Project context (from recon)"

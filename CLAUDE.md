@@ -27,13 +27,21 @@ If after a task your own token usage feels comparable to a non-Conductor session
 
 ## The Three Worker Types
 
-| Worker | Mode | Purpose | Script |
-|---|---|---|---|
-| **Recon** | read-only (`plan`) | Map the codebase before you plan. Replaces Claude reading source files. | `scripts/gc-recon.sh` |
-| **Implementer** | write (`yolo`) | Do the actual code changes. The bulk of token spend lives here. | `scripts/gc-parallel.sh` |
-| **Reviewer** | read-only (`plan`) | Audit the diff after a batch. Replaces Claude reading code to verify. | `scripts/gc-review.sh` |
+| Worker | Mode | Default model | Purpose | Script |
+|---|---|---|---|---|
+| **Recon** | read-only (`plan`) | `gemini-3.1-pro` | Map the codebase before you plan. Replaces Claude reading source files. | `scripts/gc-recon.sh` |
+| **Implementer** | write (`yolo`) | `gemini-3-flash` | Do the actual code changes. The bulk of token spend lives here. Cheap model is fine because reviewers catch slip-ups. | `scripts/gc-parallel.sh` |
+| **Reviewer** | read-only (`plan`) | `gemini-3.1-pro` | Audit the diff after a batch. Replaces Claude reading code to verify. The strong model goes here — review is where mistakes get caught. | `scripts/gc-review.sh` |
 
 All three return short structured summaries. The Conductor reads only those.
+
+Reviewers come in **four perspectives** (run alone or in parallel):
+- `general` — overall correctness, tests, conventions (default)
+- `security` — injection, secrets, auth, crypto, SSRF, supply chain
+- `perf` — algorithmic complexity, N+1 I/O, allocations, hot-path overhead
+- `api` — naming, breaking changes, surface area, type/schema discipline
+
+Use `--aspects general,security,perf,api` (or `--aspects all`) for multi-angle review on changes that warrant it. Each aspect runs as its own parallel worker.
 
 ## The Workflow
 
@@ -62,12 +70,19 @@ For any non-trivial task:
 
 5. **Read summaries only.** When the dispatcher returns, read `tasks/<batch-id>/*.summary` and `*.exitcode`. **Do not read `*.log` unless a worker failed.** Look for failed check commands in NOTES.
 
-6. **Review (cheap).** Commit the batch's changes, then dispatch a reviewer:
+6. **Review (cheap).** Commit the batch's changes, then dispatch one or more reviewers:
    ```bash
    git add -A && git commit -m "batch <id>: <one-line>"
+   # default: single general reviewer
    scripts/gc-review.sh
+   # for security/perf-sensitive or API-changing batches: multi-angle
+   scripts/gc-review.sh --aspects general,security,perf,api
+   # autoloop: review → autofix → re-review until clean (or 3 iters)
+   scripts/gc-review.sh --aspects all --until-clean \
+     --check-cmd "pnpm typecheck && pnpm test" \
+     --cwd <project-subdir-if-any>
    ```
-   Read `tasks/review-*/review.summary`. If `VERDICT: clean`, move on. If `issues` or `blocking`, dispatch a fix batch — **do not read the diff yourself** to triage; the reviewer's findings already cite `file:line`.
+   Read `tasks/review-*/<aspect>.summary` (one per aspect). If aggregated verdict is `clean`, move on. If `issues` or `blocking` and you didn't use `--until-clean`, dispatch a fix batch yourself — **do not read the diff** to triage; the reviewer's findings already cite `file:line`.
 
 7. **Integrate.** Run any final cross-cutting checks (delegate that too if heavy). Repeat from step 2 until done.
 
@@ -123,9 +138,14 @@ scripts/gc-parallel.sh tasks/<batch-id> \
   --max-parallel 4
 
 # Review — audit the most recent commit
-scripts/gc-review.sh
+scripts/gc-review.sh                                    # general aspect only
+scripts/gc-review.sh --aspects all                      # general + security + perf + api in parallel
+scripts/gc-review.sh --aspects security,perf            # subset
 scripts/gc-review.sh --range main..HEAD
 scripts/gc-review.sh --staged
+scripts/gc-review.sh --until-clean --max-iters 3 \
+  --check-cmd "<typecheck && test command>" \
+  --cwd <project-subdir>                                # autoloop: fix until clean
 
 # One-shot single worker
 scripts/gc-dispatch.sh "Implement X in src/foo.ts ..." \

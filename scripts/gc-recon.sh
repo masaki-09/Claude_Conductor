@@ -25,13 +25,15 @@ PREAMBLE="$REPO_ROOT/prompts/recon-preamble.md"
 OUT_PATH=""
 PROMPT_FILE=""
 PROMPT_TEXT=""
+MODEL_OVERRIDE=""
 PASSTHROUGH=()
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --out)   OUT_PATH="$2"; shift 2 ;;
     --file)  PROMPT_FILE="$2"; shift 2 ;;
-    --model|--cwd|--include)
+    --model) MODEL_OVERRIDE="$2"; shift 2 ;;
+    --cwd|--include)
       PASSTHROUGH+=("$1" "$2"); shift 2 ;;
     -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
     -*)
@@ -65,10 +67,13 @@ OUT="$BATCH_DIR/recon.prompt"
   fi
 } > "$OUT"
 
-echo "[gc-recon] batch dir: $BATCH_DIR"
+RECON_MODEL="${MODEL_OVERRIDE:-gemini-3.1-pro}"
+
+echo "[gc-recon] batch dir: $BATCH_DIR (model: $RECON_MODEL)"
 "$SCRIPT_DIR/gc-parallel.sh" "$BATCH_DIR" \
   --preamble "$PREAMBLE" \
   --mode plan \
+  --model "$RECON_MODEL" \
   --max-parallel 1 \
   "${PASSTHROUGH[@]}"
 rc=$?
