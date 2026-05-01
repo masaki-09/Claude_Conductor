@@ -33,6 +33,9 @@
 #   --cwd PATH            run reviewer/fixer with this as working dir
 #   --include DIR[,DIR]   extra directories accessible to workers
 #   --fix-context FILE    recon map prepended to autofix worker prompts
+#   --retries N           retry attempts on transient failures
+#   --retry-on PATTERN    extra regex to trigger retry
+#   --fallback-model NAME one last attempt with this model if primary fails
 
 set -uo pipefail
 
@@ -54,6 +57,9 @@ REVIEWER_MODEL="gemini-3-pro-preview"
 WORKER_CWD=""
 INCLUDE_DIRS=""
 FIX_CONTEXT=""
+RETRIES=""
+RETRY_ON=""
+FALLBACK_MODEL=""
 
 # ---------- parse args ----------
 while [ $# -gt 0 ]; do
@@ -70,7 +76,10 @@ while [ $# -gt 0 ]; do
     --cwd)           WORKER_CWD="$2"; shift 2 ;;
     --include)       INCLUDE_DIRS="$2"; shift 2 ;;
     --fix-context)   FIX_CONTEXT="$2"; shift 2 ;;
-    -h|--help)       sed -n '2,40p' "$0"; exit 0 ;;
+    --retries)       RETRIES="$2"; shift 2 ;;
+    --retry-on)      RETRY_ON="${RETRY_ON:+$RETRY_ON|}$2"; shift 2 ;;
+    --fallback-model) FALLBACK_MODEL="$2"; shift 2 ;;
+    -h|--help)       sed -n '2,46p' "$0"; exit 0 ;;
     -*)              echo "[gc-review] unknown flag: $1" >&2; exit 2 ;;
     *)
       if [ -z "$PROMPT_TEXT" ] && [ -z "$PROMPT_FILE" ]; then
@@ -208,9 +217,12 @@ run_review_batch() {
   # safe in practice. The --no-write guard below is an extra belt-and-braces.
   echo "[gc-review] batch: $batch_dir (aspects: ${ASPECTS}, model: $REVIEWER_MODEL)"
   local pass_args=(--mode yolo --model "$REVIEWER_MODEL" --max-parallel "$parallel")
-  [ -n "$WORKER_CWD" ]   && pass_args+=(--cwd "$WORKER_CWD")
-  [ -n "$INCLUDE_DIRS" ] && pass_args+=(--include "$INCLUDE_DIRS")
-  [ -n "$diff_pack" ]    && pass_args+=(--context-file "$diff_pack")
+  [ -n "$WORKER_CWD" ]     && pass_args+=(--cwd "$WORKER_CWD")
+  [ -n "$INCLUDE_DIRS" ]   && pass_args+=(--include "$INCLUDE_DIRS")
+  [ -n "$diff_pack" ]      && pass_args+=(--context-file "$diff_pack")
+  [ -n "$RETRIES" ]        && pass_args+=(--retries "$RETRIES")
+  [ -n "$RETRY_ON" ]       && pass_args+=(--retry-on "$RETRY_ON")
+  [ -n "$FALLBACK_MODEL" ] && pass_args+=(--fallback-model "$FALLBACK_MODEL")
   # Note: per-aspect preambles via <id>.preamble.md override the default --preamble
   pass_args+=(--preamble "$PROMPTS_DIR/reviewer-preamble.md")
 
@@ -220,6 +232,7 @@ run_review_batch() {
 }
 
 # ---------- aggregate review verdicts across aspects ----------
+# ... rest of function ...
 # Echoes the worst verdict: blocking > issues > clean > unknown
 aggregate_verdict() {
   local batch_dir="$1"
@@ -292,9 +305,12 @@ run_autofix() {
 
   echo "[gc-review] autofix iter $iter: dispatching fix worker"
   local pass_args=(--max-parallel 1 --model gemini-3-flash-preview --mode yolo)
-  [ -n "$WORKER_CWD" ]   && pass_args+=(--cwd "$WORKER_CWD")
-  [ -n "$INCLUDE_DIRS" ] && pass_args+=(--include "$INCLUDE_DIRS")
-  [ -n "$FIX_CONTEXT" ]  && pass_args+=(--context-file "$FIX_CONTEXT")
+  [ -n "$WORKER_CWD" ]     && pass_args+=(--cwd "$WORKER_CWD")
+  [ -n "$INCLUDE_DIRS" ]   && pass_args+=(--include "$INCLUDE_DIRS")
+  [ -n "$FIX_CONTEXT" ]    && pass_args+=(--context-file "$FIX_CONTEXT")
+  [ -n "$RETRIES" ]        && pass_args+=(--retries "$RETRIES")
+  [ -n "$RETRY_ON" ]       && pass_args+=(--retry-on "$RETRY_ON")
+  [ -n "$FALLBACK_MODEL" ] && pass_args+=(--fallback-model "$FALLBACK_MODEL")
 
   "$SCRIPT_DIR/gc-parallel.sh" "$fix_dir" "${pass_args[@]}"
   local rc=$?

@@ -6,7 +6,8 @@
 #                                     [--cwd PATH] [--include DIR[,DIR]]
 #                                     [--preamble PATH] [--context-file PATH]
 #                                     [--mode yolo|auto_edit|plan|default]
-#                                     [--dry-run]
+#                                     [--retries N] [--retry-on PATTERN]
+#                                     [--fallback-model NAME] [--dry-run]
 #
 # <task-dir> must contain one or more *.prompt files. Each *.prompt becomes
 # one worker. The basename (without .prompt) is the worker ID.
@@ -28,6 +29,9 @@
 #                   it wins for that worker only — used by --aspects review)
 #   context-file = (none)
 #   mode         = yolo            (use 'plan' for read-only recon/review workers)
+#   retries      = 0               (per-worker retries on transient errors)
+#   retry-on     = (none)          (extra regex pattern to trigger retry)
+#   fallback-model = (none)        (one last attempt with this model if primary fails)
 
 set -uo pipefail
 
@@ -45,6 +49,9 @@ INCLUDE_DIRS=""
 PREAMBLE_FILE=""
 CONTEXT_FILE=""
 MODE="yolo"
+RETRIES=0
+RETRY_ON=""
+FALLBACK_MODEL=""
 DRY_RUN=0
 
 while [ $# -gt 0 ]; do
@@ -56,9 +63,12 @@ while [ $# -gt 0 ]; do
     --preamble)     PREAMBLE_FILE="$2"; shift 2 ;;
     --context-file) CONTEXT_FILE="$2"; shift 2 ;;
     --mode)         MODE="$2"; shift 2 ;;
+    --retries)      RETRIES="$2"; shift 2 ;;
+    --retry-on)     RETRY_ON="${RETRY_ON:+$RETRY_ON|}$2"; shift 2 ;;
+    --fallback-model) FALLBACK_MODEL="$2"; shift 2 ;;
     --dry-run)      DRY_RUN=1; shift ;;
     -h|--help)
-      sed -n '2,28p' "$0"; exit 0 ;;
+      sed -n '2,36p' "$0"; exit 0 ;;
     -*)
       echo "[gc-parallel] unknown flag: $1" >&2; exit 2 ;;
     *)
@@ -157,15 +167,58 @@ run_worker() {
   if [ -n "$INCLUDE_DIRS" ]; then gemini_args+=(--include-directories "$INCLUDE_DIRS"); fi
 
   local pushd_dir="${WORKER_CWD:-$PWD}"
+  local TRANSIENT_RX='429|RESOURCE_EXHAUSTED|QUOTA_EXHAUSTED|UNAVAILABLE|INTERNAL|DEADLINE_EXCEEDED|gaxios-gaxios-error.*5\d\d'
 
   echo "[gc-parallel] start  $id" >&2
   local rc=0
+  local attempt=0
+  local max_attempts=$((1 + RETRIES))
+  local used_fallback=0
+  local final_model="$MODEL"
   local started_at; started_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
   local start_ts; start_ts=$(date +%s)
-  (
-    cd "$pushd_dir" || exit 99
-    gemini "${gemini_args[@]}" < "$combined"
-  ) > "$log_file" 2>&1 || rc=$?
+
+  while [ $attempt -lt $max_attempts ]; do
+    attempt=$((attempt + 1))
+    (
+      cd "$pushd_dir" || exit 99
+      gemini "${gemini_args[@]}" < "$combined"
+    ) > "$log_file" 2>&1 || rc=$?
+
+    if [ $rc -eq 0 ]; then break; fi
+
+    # Check for transient errors to trigger retry
+    if grep -qE "$TRANSIENT_RX|${RETRY_ON:-(?!.*)}" "$log_file"; then
+      if [ $attempt -lt $max_attempts ]; then
+        local delay=$((2 * 3 ** (attempt - 1)))
+        echo "[gc-parallel] retry  $id (attempt $attempt/$max_attempts, transient error, sleeping ${delay}s)" >&2
+        sleep $delay
+        continue
+      fi
+    fi
+    break
+  done
+
+  # Fallback model attempt
+  if [ $rc -ne 0 ] && [ -n "$FALLBACK_MODEL" ] && [ "$FALLBACK_MODEL" != "$MODEL" ]; then
+    used_fallback=1
+    final_model="$FALLBACK_MODEL"
+    echo "[gc-parallel] fallback $id (primary failed, trying $FALLBACK_MODEL)" >&2
+    local fallback_args=()
+    for arg in "${gemini_args[@]}"; do
+      if [ "$arg" = "$MODEL" ]; then fallback_args+=("$FALLBACK_MODEL"); else fallback_args+=("$arg"); fi
+    done
+    # If -m wasn't in gemini_args (unlikely if MODEL was set), we should ensure it is
+    if [[ ! " ${fallback_args[*]} " =~ " -m " ]]; then
+        fallback_args+=(-m "$FALLBACK_MODEL")
+    fi
+
+    (
+      cd "$pushd_dir" || exit 99
+      gemini "${fallback_args[@]}" < "$combined"
+    ) > "$log_file" 2>&1 || rc=$?
+  fi
+
   local completed_at; completed_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
   local end_ts; end_ts=$(date +%s)
   local duration=$((end_ts - start_ts))
@@ -178,7 +231,7 @@ run_worker() {
   local usage_file="$TASK_DIR/$id.usage.json"
   python -c "
 import json, sys, os
-jid, task_dir, log_f, text_f, usage_f, start_iso, end_iso, dur, exit_c = sys.argv[1:]
+jid, task_dir, log_f, text_f, usage_f, start_iso, end_iso, dur, exit_c, attempts, used_fb = sys.argv[1:]
 try:
     with open(log_f, 'r', encoding='utf-8', errors='ignore') as f:
         content = f.read()
@@ -206,18 +259,20 @@ try:
         'total_tokens': t_tok if t_tok > 0 else None,
         'derived_total_tokens': (p_tok + c_tok) if t_tok > 0 else None,
         'started_at': start_iso, 'completed_at': end_iso,
-        'duration_seconds': int(dur), 'exit_code': int(exit_c), 'status': 'unknown'
+        'duration_seconds': int(dur), 'exit_code': int(exit_c), 'status': 'unknown',
+        'attempts': int(attempts), 'used_fallback': used_fb == '1'
     }
     with open(usage_f, 'w', encoding='utf-8') as f:
         json.dump(usage, f, indent=2)
 except Exception as e:
     with open(usage_f, 'w', encoding='utf-8') as f:
         json.dump({'id': jid, 'model': None, 'prompt_tokens': None, 'completion_tokens': None, 'total_tokens': None, 'derived_total_tokens': None,
-                   'started_at': start_iso, 'completed_at': end_iso, 'duration_seconds': int(dur), 'exit_code': int(exit_c), 'status': 'unknown'}, f, indent=2)
+                   'started_at': start_iso, 'completed_at': end_iso, 'duration_seconds': int(dur), 'exit_code': int(exit_c), 'status': 'unknown',
+                   'attempts': int(attempts), 'used_fallback': used_fb == '1'}, f, indent=2)
     if not os.path.exists(text_f):
         with open(text_f, 'w', encoding='utf-8') as f:
             f.write(f'ERROR: {str(e)}\\n')
-" "$id" "$TASK_DIR" "$log_file" "$text_file" "$usage_file" "$started_at" "$completed_at" "$duration" "$rc" 2>/dev/null || true
+" "$id" "$TASK_DIR" "$log_file" "$text_file" "$usage_file" "$started_at" "$completed_at" "$duration" "$rc" "$attempt" "$used_fallback" 2>/dev/null || true
 
   # Extract summary: prefer the marker block emitted by the preamble.
   # Implementers/recon use STATUS:; reviewer uses VERDICT:. Accept either.
@@ -240,6 +295,9 @@ except Exception as e:
     elif grep -qE '^VERDICT:[[:space:]]*issues'   "$summary_file"; then final_status="partial"
     elif grep -qE '^STATUS:[[:space:]]*failed'    "$summary_file"; then final_status="failed"
     elif grep -qE '^VERDICT:[[:space:]]*blocking' "$summary_file"; then final_status="failed"
+    fi
+    if [ "$used_fallback" -eq 1 ] && [[ "$final_status" =~ ^(ok|partial)$ ]]; then
+      final_status="${final_status}-fallback"
     fi
   else
     final_status="failed (exit=$rc)"

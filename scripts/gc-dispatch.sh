@@ -10,7 +10,8 @@
 #   scripts/gc-dispatch.sh --id <id> --file <prompt>   [opts...]
 #   echo "..." | scripts/gc-dispatch.sh --stdin        [opts...]
 #
-# Extra opts are forwarded to gc-parallel.sh (e.g. --model, --cwd, --include).
+# Extra opts are forwarded to gc-parallel.sh (e.g. --model, --cwd, --include,
+# --retries, --retry-on, --fallback-model).
 
 set -uo pipefail
 
@@ -28,8 +29,8 @@ while [ $# -gt 0 ]; do
     --id)    ID="$2"; shift 2 ;;
     --file)  PROMPT_FILE="$2"; shift 2 ;;
     --stdin) FROM_STDIN=1; shift ;;
-    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
-    --max-parallel|--model|--cwd|--include|--preamble|--context-file|--mode)
+    -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
+    --max-parallel|--model|--cwd|--include|--preamble|--context-file|--mode|--retries|--retry-on|--fallback-model)
       PASSTHROUGH+=("$1" "$2"); shift 2 ;;
     --dry-run)
       PASSTHROUGH+=("$1"); shift ;;

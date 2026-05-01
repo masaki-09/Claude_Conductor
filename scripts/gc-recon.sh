@@ -8,7 +8,7 @@
 #   scripts/gc-recon.sh --file path/to/focus.txt
 #   scripts/gc-recon.sh --out tasks/_recon/recon.md  # also copy result to a stable location
 #
-# Pass-through opts: --model, --cwd, --include
+# Pass-through opts: --model, --cwd, --include, --retries, --retry-on, --fallback-model
 #
 # Result locations:
 #   tasks/recon-<timestamp>/recon.summary           # the structured map (read this)
@@ -33,9 +33,9 @@ while [ $# -gt 0 ]; do
     --out)   OUT_PATH="$2"; shift 2 ;;
     --file)  PROMPT_FILE="$2"; shift 2 ;;
     --model) MODEL_OVERRIDE="$2"; shift 2 ;;
-    --cwd|--include)
+    --cwd|--include|--retries|--retry-on|--fallback-model)
       PASSTHROUGH+=("$1" "$2"); shift 2 ;;
-    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
     -*)
       echo "[gc-recon] unknown flag: $1" >&2; exit 2 ;;
     *)
