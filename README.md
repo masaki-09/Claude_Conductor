@@ -33,6 +33,11 @@ Three kinds of workers do the heavy lifting, with model selection tuned to each 
 
 Reviewers come in **four perspectives**: `general`, `security`, `perf`, `api`. Run them alone or all-at-once with `--aspects all`. With `--until-clean`, the reviewer can also drive an autoloop: review → auto-dispatch a fix worker → re-review, repeating until clean or `--max-iters` (default 3) is hit.
 
+**v0.4** adds three things on top:
+- **Per-worker retry + quota-aware fallback** (`--retries N --fallback-model NAME`) so one transient 429 doesn't kill a whole parallel batch.
+- **Token telemetry** — every worker writes `<id>.usage.json` with prompt/completion/total tokens; per batch a `_batch.usage.json` aggregates. New `scripts/gc-stats.sh` rolls these up over `--since 24h` (or any window) and reports estimated cost.
+- **Diff-pack pre-build for reviewers** — `gc-review.sh` runs `git diff` once and feeds the result to all aspect reviewers as context, instead of each reviewer re-issuing git commands. Reduces redundant tokens and round-trip latency on multi-aspect runs.
+
 Operating guide: [`docs/usage.md`](docs/usage.md). Rules Claude itself follows: [`CLAUDE.md`](CLAUDE.md). Rationale and heuristics: [`docs/workflow.md`](docs/workflow.md), [`docs/token-budget.md`](docs/token-budget.md). `CLAUDE.md` is auto-loaded by Claude Code when a session starts in this repo.
 
 ## Requirements

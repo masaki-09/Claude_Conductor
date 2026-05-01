@@ -170,6 +170,29 @@ scripts/gc-review.sh --staged
 | `--context-file path` | `gc-parallel.sh` | Path to recon map. **Always set this** for implementer batches. |
 | `--aspects <list>` | `gc-review.sh` | Comma list of `general`, `security`, `perf`, `api`, or `all`. Each aspect runs as its own parallel reviewer. Default is `general`. |
 | `--until-clean` | `gc-review.sh` | Autoloop: after a non-clean review, dispatch a fix worker, commit, re-review. Stops when clean or `--max-iters` (default 3) is hit. Pair with `--check-cmd` so the fixer self-validates. |
+| `--retries N` | any dispatcher | Per-worker retries on transient failures (429, RESOURCE_EXHAUSTED, UNAVAILABLE, INTERNAL, DEADLINE_EXCEEDED). Default 0 = single attempt. Backoff is exponential (2s, 6s, 18s). |
+| `--retry-on PATTERN` | any dispatcher | Extra regex on top of the built-in transient set, OR-ed in. Useful when a workload-specific error string also justifies a retry. |
+| `--fallback-model NAME` | any dispatcher | After exhausting retries, do one final attempt with this model. On success the worker's status becomes `ok-fallback` (or `partial-fallback`). Repeated fallbacks in `gc-stats.sh` mean the primary model is wrong-sized. |
+
+## 4.5 Inspecting token spend
+
+`gc-stats.sh` aggregates per-worker `*.usage.json` and per-batch `_batch.usage.json` files written automatically by every `gc-parallel.sh` run.
+
+```bash
+# Last 24 hours, breakdown by model (default)
+scripts/gc-stats.sh
+
+# Last 7 days, broken down by worker_type (recon|impl|review|autofix|oneshot)
+scripts/gc-stats.sh --since 7d --by worker_type
+
+# Everything since a specific batch
+scripts/gc-stats.sh --since-batch v04-b1 --by status
+
+# Machine-readable for scripting
+scripts/gc-stats.sh --json --since 24h
+```
+
+Pricing constants live in `gc-stats.sh` and use public list pricing as of the release date — costs are estimates, not invoices.
 
 ## 6. Troubleshooting
 

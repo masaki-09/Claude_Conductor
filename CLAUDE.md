@@ -137,6 +137,11 @@ scripts/gc-parallel.sh tasks/<batch-id> \
   --context-file tasks/_recon/recon.md \
   --max-parallel 4
 
+# Resilient dispatch — retry on quota / 429 and fall back to a cheaper model
+scripts/gc-parallel.sh tasks/<batch-id> \
+  --context-file tasks/_recon/recon.md \
+  --retries 2 --fallback-model gemini-3-flash-preview
+
 # Review — audit the most recent commit
 scripts/gc-review.sh                                    # general aspect only
 scripts/gc-review.sh --aspects all                      # general + security + perf + api in parallel
@@ -147,9 +152,28 @@ scripts/gc-review.sh --until-clean --max-iters 3 \
   --check-cmd "<typecheck && test command>" \
   --cwd <project-subdir>                                # autoloop: fix until clean
 
+# Inspect token usage / estimated cost
+scripts/gc-stats.sh                                     # last 24h
+scripts/gc-stats.sh --since 7d --by model
+scripts/gc-stats.sh --since-batch v04-b1 --by worker_type
+
 # One-shot single worker
 scripts/gc-dispatch.sh "Implement X in src/foo.ts ..." \
   --context-file tasks/_recon/recon.md
 ```
+
+## v0.4 artifacts produced per worker
+
+Each worker now leaves these files in its batch directory:
+
+- `<id>.text`        — extracted natural-text response (the human surface)
+- `<id>.log`         — raw JSON output from gemini (forensic only — DON'T read unless investigating a failure)
+- `<id>.summary`     — STATUS/VERDICT block (the conductor surface)
+- `<id>.exitcode`    — process exit code
+- `<id>.status`      — `ok | partial | failed | ok-fallback | partial-fallback | unknown`
+- `<id>.usage.json`  — per-worker token usage and timing
+- `_batch.usage.json` — batch-level aggregate (read by `gc-stats.sh`)
+
+The `-fallback` suffix on a status means the worker only succeeded after `--fallback-model` engaged. Treat it as success but log it — repeated fallbacks indicate the primary model is wrong-sized for the task.
 
 When the user says "use Conductor mode" or starts a session in this repo, this file is your standing instruction. Do not deviate without telling them.

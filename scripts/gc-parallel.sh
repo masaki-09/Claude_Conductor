@@ -16,7 +16,12 @@
 #   <task-dir>/<id>.log        — full worker stdout+stderr (large; do NOT read by default)
 #   <task-dir>/<id>.summary    — short tail used by the conductor
 #   <task-dir>/<id>.exitcode   — process exit code as text
-#   <task-dir>/<id>.status     — one-line status (ok|failed|timeout)
+#   <task-dir>/<id>.status     — ok | partial | failed | ok-fallback |
+#                                  partial-fallback | unknown
+#   <task-dir>/<id>.text       — extracted plain-text response (humans)
+#   <task-dir>/<id>.usage.json — per-worker token usage (prompt/completion
+#                                  /total/derived_total) and timing
+#   <task-dir>/_batch.usage.json — batch-level aggregated token usage
 #
 # Each worker's input is built as: <preamble> + <context-file?> + <task body>.
 # This lets recon output be prepended automatically (see scripts/gc-recon.sh).
@@ -149,7 +154,7 @@ run_worker() {
     cat "$effective_preamble"
     echo
     if [ -n "$CONTEXT_FILE" ]; then
-      echo "## Project context (from recon)"
+      echo "## Prepended context"
       echo
       cat "$CONTEXT_FILE"
       echo
