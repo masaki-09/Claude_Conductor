@@ -204,6 +204,7 @@ try:
         'prompt_tokens': p_tok if t_tok > 0 else None,
         'completion_tokens': c_tok if t_tok > 0 else None,
         'total_tokens': t_tok if t_tok > 0 else None,
+        'derived_total_tokens': (p_tok + c_tok) if t_tok > 0 else None,
         'started_at': start_iso, 'completed_at': end_iso,
         'duration_seconds': int(dur), 'exit_code': int(exit_c), 'status': 'unknown'
     }
@@ -211,7 +212,7 @@ try:
         json.dump(usage, f, indent=2)
 except Exception as e:
     with open(usage_f, 'w', encoding='utf-8') as f:
-        json.dump({'id': jid, 'model': None, 'prompt_tokens': None, 'completion_tokens': None, 'total_tokens': None,
+        json.dump({'id': jid, 'model': None, 'prompt_tokens': None, 'completion_tokens': None, 'total_tokens': None, 'derived_total_tokens': None,
                    'started_at': start_iso, 'completed_at': end_iso, 'duration_seconds': int(dur), 'exit_code': int(exit_c), 'status': 'unknown'}, f, indent=2)
     if not os.path.exists(text_f):
         with open(text_f, 'w', encoding='utf-8') as f:
@@ -255,7 +256,6 @@ try:
     with open(f_path, 'w', encoding='utf-8') as f: json.dump(data, f, indent=2)
 except: pass
 " "$usage_file" "$final_status" 2>/dev/null || true
-  rm -f "$text_file"
 
   echo "[gc-parallel] done   $id (exit=$rc, status=$final_status)" >&2
 }
@@ -294,7 +294,8 @@ for w in workers:
     if s: by_status[s] = by_status.get(s, 0) + 1
     totals['prompt_tokens'] += w.get('prompt_tokens') or 0
     totals['completion_tokens'] += w.get('completion_tokens') or 0
-    totals['total_tokens'] += w.get('total_tokens') or 0
+    # Use derived_total_tokens for the batch total to ensure total == prompt + completion
+    totals['total_tokens'] += w.get('derived_total_tokens') or 0
     if w.get('started_at'): starts.append(w['started_at'])
     if w.get('completed_at'): ends.append(w['completed_at'])
 aggregate = {
