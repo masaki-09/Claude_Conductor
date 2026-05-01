@@ -143,6 +143,40 @@ run_review_batch() {
   local batch_dir="$REPO_ROOT/tasks/$id"
   mkdir -p "$batch_dir"
 
+  # Build diff package
+  local diff_pack="$batch_dir/_diff-pack.md"
+  {
+    echo "# Diff package for review"
+    echo
+    echo "SCOPE: $SCOPE_DESC"
+    echo "GENERATED_AT: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo
+    echo "## Changed files"
+    echo
+    $CHANGED_CMD 2>/tmp/gc-err.$$ || echo "(could not list changed files)"
+    [ -s /tmp/gc-err.$$ ] && echo "ERROR: $(cat /tmp/gc-err.$$)"
+    rm -f /tmp/gc-err.$$
+    echo
+    echo "## Recent commits in scope"
+    echo
+    if [ "$STAGED" -eq 1 ]; then
+      echo "(staged changes; not yet committed)"
+    else
+      local range_arg="${RANGE:-HEAD~1..HEAD}"
+      git log --oneline "$range_arg" 2>/tmp/gc-err.$$ || echo "(could not list recent commits)"
+      [ -s /tmp/gc-err.$$ ] && echo "ERROR: $(cat /tmp/gc-err.$$)"
+      rm -f /tmp/gc-err.$$
+    fi
+    echo
+    echo "## Full diff"
+    echo
+    echo '```diff'
+    $DIFF_CMD 2>/tmp/gc-err.$$ || echo "(could not generate diff)"
+    [ -s /tmp/gc-err.$$ ] && echo "ERROR: $(cat /tmp/gc-err.$$)"
+    rm -f /tmp/gc-err.$$
+    echo '```'
+  } > "$diff_pack"
+
   for entry in "${ASPECT_LIST[@]}"; do
     local aspect="${entry%%:*}"
     local preamble="${entry#*:}"
@@ -150,9 +184,7 @@ run_review_batch() {
     {
       echo "Review $SCOPE_DESC."
       echo
-      echo "First, list the changed files with: \`$CHANGED_CMD\`"
-      echo "Then, read the full diff with: \`$DIFF_CMD\`"
-      echo "Open the changed files as needed for surrounding context. Then produce the verdict in the schema specified in the preamble."
+      echo "The diff being reviewed is available as \`_diff-pack.md\` in the prepended project context above. Read it carefully. You may also \`read_file\` for surrounding context if needed. Then produce the verdict in the schema specified in the preamble."
       echo
       if [ -n "$PROMPT_FILE" ]; then
         echo "Additional context / acceptance criteria:"
@@ -178,6 +210,7 @@ run_review_batch() {
   local pass_args=(--mode yolo --model "$REVIEWER_MODEL" --max-parallel "$parallel")
   [ -n "$WORKER_CWD" ]   && pass_args+=(--cwd "$WORKER_CWD")
   [ -n "$INCLUDE_DIRS" ] && pass_args+=(--include "$INCLUDE_DIRS")
+  [ -n "$diff_pack" ]    && pass_args+=(--context-file "$diff_pack")
   # Note: per-aspect preambles via <id>.preamble.md override the default --preamble
   pass_args+=(--preamble "$PROMPTS_DIR/reviewer-preamble.md")
 

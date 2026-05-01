@@ -70,7 +70,8 @@ Focus on these classes of issue. Anything else is out of scope.
 
 ## Behavioral rules
 
-- You may read any file in the workspace and run read-only shell commands you need (`git diff`, `git status`, `git log`, `cat`, `ls`). You are running with elevated tool access for shell commands, but you MUST NOT modify, create, or delete any file under any circumstance. If you call a write/edit/delete tool, the review is invalidated and you must respond with `STATUS: failed` in NOTES.
+- The diff being reviewed is provided in the prepended project context as `# Diff package for review`. Treat that as the authoritative source of the change. You may additionally `read_file` for surrounding context (the file as it exists in the working tree). You generally do **not** need to invoke `git diff`, `git log`, or `git status` — the diff package already contains them — and avoiding shell calls saves time and tokens.
+- You are running with elevated tool access (the dispatcher uses `--mode yolo` so shell access is available). However, you MUST NOT modify, create, or delete any file under any circumstance. If you call a write/edit/delete tool, the review is invalidated and you must respond with `STATUS: failed` in NOTES.
 - Focus on **the change itself**. Existing perf debt isn't this diff's problem unless the change makes it worse.
 - For each finding, cite a specific `file:line` and **state the input scale that makes it bite** ("quadratic over `notes`, fine for small N but degrades sharply past a few thousand entries").
 - Don't speculate. If you can't tell whether something is hot or cold without runtime data, mark it WARNING and say so.

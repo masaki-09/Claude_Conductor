@@ -152,7 +152,7 @@ run_worker() {
   } > "$combined"
 
   # Build gemini command
-  local gemini_args=(-p "" -o text --skip-trust --approval-mode "$MODE")
+  local gemini_args=(-p "" -o json --skip-trust --approval-mode "$MODE")
   if [ -n "$MODEL" ];        then gemini_args+=(-m "$MODEL"); fi
   if [ -n "$INCLUDE_DIRS" ]; then gemini_args+=(--include-directories "$INCLUDE_DIRS"); fi
 
@@ -160,41 +160,104 @@ run_worker() {
 
   echo "[gc-parallel] start  $id" >&2
   local rc=0
+  local started_at; started_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  local start_ts; start_ts=$(date +%s)
   (
     cd "$pushd_dir" || exit 99
     gemini "${gemini_args[@]}" < "$combined"
   ) > "$log_file" 2>&1 || rc=$?
+  local completed_at; completed_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  local end_ts; end_ts=$(date +%s)
+  local duration=$((end_ts - start_ts))
 
   rm -f "$combined"
   echo "$rc" > "$exitcode_file"
 
+  # Extract text and telemetry from JSON log
+  local text_file="$TASK_DIR/$id.text"
+  local usage_file="$TASK_DIR/$id.usage.json"
+  python -c "
+import json, sys, os
+jid, task_dir, log_f, text_f, usage_f, start_iso, end_iso, dur, exit_c = sys.argv[1:]
+try:
+    with open(log_f, 'r', encoding='utf-8', errors='ignore') as f:
+        content = f.read()
+    start_idx = content.find('{')
+    end_idx = content.rfind('}')
+    if start_idx == -1 or end_idx == -1 or end_idx < start_idx:
+        raise ValueError('No JSON found')
+    data = json.loads(content[start_idx:end_idx+1])
+    with open(text_f, 'w', encoding='utf-8') as f:
+        f.write(data.get('response', ''))
+    stats = data.get('stats', {})
+    models = stats.get('models', {})
+    m_name, p_tok, c_tok, t_tok = None, 0, 0, 0
+    for m, m_stats in models.items():
+        toks = m_stats.get('tokens', {})
+        p, c, t = toks.get('input', 0), toks.get('candidates', 0), toks.get('total', 0)
+        if t > 0:
+            if not m_name: m_name = m
+            p_tok += p; c_tok += c; t_tok += t
+    if not m_name and models: m_name = list(models.keys())[0]
+    usage = {
+        'id': jid, 'model': m_name,
+        'prompt_tokens': p_tok if t_tok > 0 else None,
+        'completion_tokens': c_tok if t_tok > 0 else None,
+        'total_tokens': t_tok if t_tok > 0 else None,
+        'started_at': start_iso, 'completed_at': end_iso,
+        'duration_seconds': int(dur), 'exit_code': int(exit_c), 'status': 'unknown'
+    }
+    with open(usage_f, 'w', encoding='utf-8') as f:
+        json.dump(usage, f, indent=2)
+except Exception as e:
+    with open(usage_f, 'w', encoding='utf-8') as f:
+        json.dump({'id': jid, 'model': None, 'prompt_tokens': None, 'completion_tokens': None, 'total_tokens': None,
+                   'started_at': start_iso, 'completed_at': end_iso, 'duration_seconds': int(dur), 'exit_code': int(exit_c), 'status': 'unknown'}, f, indent=2)
+    if not os.path.exists(text_f):
+        with open(text_f, 'w', encoding='utf-8') as f:
+            f.write(f'ERROR: {str(e)}\\n')
+" "$id" "$TASK_DIR" "$log_file" "$text_file" "$usage_file" "$started_at" "$completed_at" "$duration" "$rc" 2>/dev/null || true
+
   # Extract summary: prefer the marker block emitted by the preamble.
   # Implementers/recon use STATUS:; reviewer uses VERDICT:. Accept either.
-  if grep -nE '^(STATUS|VERDICT):[[:space:]]' "$log_file" > /dev/null 2>&1; then
-    awk '/^(STATUS|VERDICT):[[:space:]]/{p=1} p{print}' "$log_file" | tail -c 4096 > "$summary_file"
+  if grep -nE '^(STATUS|VERDICT):[[:space:]]' "$text_file" > /dev/null 2>&1; then
+    awk '/^(STATUS|VERDICT):[[:space:]]/{p=1} p{print}' "$text_file" | tail -c 4096 > "$summary_file"
   else
     {
       echo "STATUS: unknown (no STATUS/VERDICT marker in worker output)"
-      echo "--- log tail ---"
-      tail -n 30 "$log_file"
+      echo "--- output tail ---"
+      tail -n 30 "$text_file" 2>/dev/null || tail -n 30 "$log_file"
     } > "$summary_file"
   fi
 
+  local final_status="unknown"
   if [ "$rc" -eq 0 ]; then
     # Map both schemas onto a single status vocabulary: ok / partial / failed.
-    if   grep -qE '^STATUS:[[:space:]]*ok'        "$summary_file"; then echo "ok"      > "$status_file"
-    elif grep -qE '^VERDICT:[[:space:]]*clean'    "$summary_file"; then echo "ok"      > "$status_file"
-    elif grep -qE '^STATUS:[[:space:]]*partial'   "$summary_file"; then echo "partial" > "$status_file"
-    elif grep -qE '^VERDICT:[[:space:]]*issues'   "$summary_file"; then echo "partial" > "$status_file"
-    elif grep -qE '^STATUS:[[:space:]]*failed'    "$summary_file"; then echo "failed"  > "$status_file"
-    elif grep -qE '^VERDICT:[[:space:]]*blocking' "$summary_file"; then echo "failed"  > "$status_file"
-    else echo "unknown" > "$status_file"
+    if   grep -qE '^STATUS:[[:space:]]*ok'        "$summary_file"; then final_status="ok"
+    elif grep -qE '^VERDICT:[[:space:]]*clean'    "$summary_file"; then final_status="ok"
+    elif grep -qE '^STATUS:[[:space:]]*partial'   "$summary_file"; then final_status="partial"
+    elif grep -qE '^VERDICT:[[:space:]]*issues'   "$summary_file"; then final_status="partial"
+    elif grep -qE '^STATUS:[[:space:]]*failed'    "$summary_file"; then final_status="failed"
+    elif grep -qE '^VERDICT:[[:space:]]*blocking' "$summary_file"; then final_status="failed"
     fi
   else
-    echo "failed (exit=$rc)" > "$status_file"
+    final_status="failed (exit=$rc)"
   fi
+  echo "$final_status" > "$status_file"
 
-  echo "[gc-parallel] done   $id (exit=$rc, status=$(cat "$status_file"))" >&2
+  # Finalize usage file with the determined status
+  python -c "
+import json, sys
+f_path, status = sys.argv[1:]
+try:
+    with open(f_path, 'r', encoding='utf-8') as f: data = json.load(f)
+    data['status'] = status
+    with open(f_path, 'w', encoding='utf-8') as f: json.dump(data, f, indent=2)
+except: pass
+" "$usage_file" "$final_status" 2>/dev/null || true
+  rm -f "$text_file"
+
+  echo "[gc-parallel] done   $id (exit=$rc, status=$final_status)" >&2
 }
 
 # ---------- throttle loop ----------
@@ -210,6 +273,39 @@ done
 wait
 
 # ---------- final report ----------
+# Aggregate telemetry
+python -c "
+import json, os, glob, sys
+task_dir = sys.argv[1]
+batch_id = os.path.basename(task_dir.rstrip('/\\\\'))
+usage_files = glob.glob(os.path.join(task_dir, '*.usage.json'))
+usage_files = [f for f in usage_files if not os.path.basename(f).startswith('_')]
+workers = []
+for f in usage_files:
+    try:
+        with open(f, 'r', encoding='utf-8') as jf: workers.append(json.load(jf))
+    except: pass
+by_model, by_status = {}, {}
+totals = {'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0}
+starts, ends = [], []
+for w in workers:
+    m = w.get('model'); s = w.get('status')
+    if m: by_model[m] = by_model.get(m, 0) + 1
+    if s: by_status[s] = by_status.get(s, 0) + 1
+    totals['prompt_tokens'] += w.get('prompt_tokens') or 0
+    totals['completion_tokens'] += w.get('completion_tokens') or 0
+    totals['total_tokens'] += w.get('total_tokens') or 0
+    if w.get('started_at'): starts.append(w['started_at'])
+    if w.get('completed_at'): ends.append(w['completed_at'])
+aggregate = {
+    'batch_id': batch_id, 'worker_count': len(workers),
+    'by_model': by_model, 'by_status': by_status, 'totals': totals,
+    'started_at': min(starts) if starts else None, 'completed_at': max(ends) if ends else None
+}
+with open(os.path.join(task_dir, '_batch.usage.json'), 'w', encoding='utf-8') as f:
+    json.dump(aggregate, f, indent=2)
+" "$TASK_DIR" 2>/dev/null || true
+
 echo
 echo "[gc-parallel] batch complete: $TASK_DIR"
 fail_count=0
