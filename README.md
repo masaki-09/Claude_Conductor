@@ -38,6 +38,25 @@ Reviewers come in **four perspectives**: `general`, `security`, `perf`, `api`. R
 - **Token telemetry** — every worker writes `<id>.usage.json` with prompt/completion/total tokens; per batch a `_batch.usage.json` aggregates. New `scripts/gc-stats.sh` rolls these up over `--since 24h` (or any window) and reports estimated cost.
 - **Diff-pack pre-build for reviewers** — `gc-review.sh` runs `git diff` once and feeds the result to all aspect reviewers as context, instead of each reviewer re-issuing git commands. Reduces redundant tokens and round-trip latency on multi-aspect runs.
 
+## v0.5 — Session checkpoint & rate-limit-safe resume
+
+Long-running agentic sessions often hit Claude's rate limits or context pressure, leading to "lost" work when a session is interrupted. v0.5 introduces a robust event log and state-checkpointing mechanism that allows a new Claude session to pick up exactly where the last one left off, with full visibility into recent worker activity and plan progress.
+
+- **Transparent event log**: `tasks/_session/events.jsonl` is written to by every `gc-*` script, tracking batch lifecycle and worker outcomes.
+- **On-demand briefing**: `scripts/gc-resume.sh` aggregates the log, git state, and your `plan.md` into a single `state.md` briefing.
+- **Auto-checkpoint**: `scripts/gc-checkpoint.sh` can be wired to Claude Code's "Stop" hook to automatically regenerate the briefing at the end of every turn.
+
+### Setup (Stop hook)
+
+To enable auto-checkpointing, add the following to your `~/.claude/settings.json` (replace `/path/to/conductor` with the absolute path to this repo):
+
+```json
+"hooks": {
+  "Stop": "/path/to/conductor/scripts/gc-checkpoint.sh"
+}
+```
+See `examples/stop-hook-snippet.json` for a complete fragment.
+
 Operating guide: [`docs/usage.md`](docs/usage.md). Rules Claude itself follows: [`CLAUDE.md`](CLAUDE.md). Rationale and heuristics: [`docs/workflow.md`](docs/workflow.md), [`docs/token-budget.md`](docs/token-budget.md). `CLAUDE.md` is auto-loaded by Claude Code when a session starts in this repo.
 
 ## Requirements

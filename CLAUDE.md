@@ -176,4 +176,58 @@ Each worker now leaves these files in its batch directory:
 
 The `-fallback` suffix on a status means the worker only succeeded after `--fallback-model` engaged. Treat it as success but log it — repeated fallbacks indicate the primary model is wrong-sized for the task.
 
+## Session Resume (v0.5)
+
+### What you do at session start
+
+- If `tasks/_session/state.md` exists, read it FIRST (before doing anything else, including reading user-supplied source files). It is your "where were we" briefing — generated automatically by gc-checkpoint.sh on each Stop event.
+- If `tasks/_session/plan.md` exists, that's your active plan written by your previous self. Continue from the first unchecked `[ ]` item.
+- If neither exists and the task is multi-step (3+ batches expected), draft `tasks/_session/plan.md` BEFORE dispatching the first batch.
+
+### plan.md schema
+
+A simple, pragmatic schema (no validator — Claude follows the convention):
+
+```markdown
+# Plan
+
+Goal: <one-line>
+Started: <YYYY-MM-DD>
+
+Steps:
+- [x] completed step
+- [x] completed step
+- [ ] current step
+- [ ] future step
+
+Notes:
+- <freeform context for resume>
+```
+
+You update plan.md after each batch by checking `[x]` items and adding any new sub-steps that emerged.
+
+### Auto-checkpoint on Stop
+
+If the user has wired up the Stop hook (see `examples/stop-hook-snippet.json` and the install note in README), `tasks/_session/state.md` regenerates automatically on every turn end. You don't need to invoke `gc-checkpoint.sh` manually — but `gc-resume.sh` is yours to invoke whenever you want to take a fresh look.
+
+### What the briefing contains
+
+`gc-resume.sh` produces a markdown file with:
+- Active goal (parsed from plan.md)
+- Plan progress (full plan.md)
+- Recent activity (last ~30 events with emoji and one-line summary)
+- Recent commits (`git log --oneline -20`)
+- Working tree (`git status --short`)
+- Suggested next step (heuristic, e.g. "investigate failed worker in batch X" / "continue with first unchecked plan item")
+
+### When the rate-limit hits Claude
+
+If your session is interrupted by a Claude rate-limit pause:
+1. Stop hook fires → state.md saves automatically.
+2. The user opens a new session later.
+3. The new "you" reads state.md and plan.md and resumes from the next unchecked step.
+4. No special instruction from the user is required — the resume is mechanical.
+
+If the Stop hook is NOT configured, the user can manually run `scripts/gc-resume.sh` between sessions to bridge the gap.
+
 When the user says "use Conductor mode" or starts a session in this repo, this file is your standing instruction. Do not deviate without telling them.

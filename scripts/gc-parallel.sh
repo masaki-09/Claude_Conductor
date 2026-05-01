@@ -141,6 +141,25 @@ if [ "$DRY_RUN" -eq 1 ]; then
   exit 0
 fi
 
+# ---------- concurrent run protection ----------
+LOCKFILE="$TASK_DIR/.gc-parallel.lock"
+if [ -f "$LOCKFILE" ]; then
+  existing_pid="$(cat "$LOCKFILE" 2>/dev/null)"
+  if [ -n "$existing_pid" ] && kill -0 "$existing_pid" 2>/dev/null; then
+    echo "[gc-parallel] another gc-parallel run is already active in this task dir (pid $existing_pid)" >&2
+    echo "[gc-parallel] if you're sure no other run is active, remove $LOCKFILE manually" >&2
+    exit 3
+  else
+    echo "[gc-parallel] stale lockfile (pid $existing_pid not running) — removing" >&2
+    rm -f "$LOCKFILE"
+  fi
+fi
+echo "$$" > "$LOCKFILE"
+
+# Ensure cleanup on any exit. Note: run_worker uses its own traps for local
+# tempfiles; this global trap ensures the lockfile is removed.
+trap 'rm -f "$LOCKFILE"' EXIT INT TERM
+
 # ---------- worker function ----------
 run_worker() {
   local prompt_file="$1"

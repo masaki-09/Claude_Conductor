@@ -222,3 +222,61 @@ Between sessions:
 rm -rf tasks/recon-* tasks/review-* tasks/oneshot-*
 # Keep tasks/_recon/recon.md (it's what you pass to --context-file).
 ```
+
+## 8. Session checkpoint & resume (v0.5)
+
+### 8.1 What it is
+
+A persistent record of in-progress work that survives Claude rate-limit pauses, manual session ends, and machine reboots. Three pieces:
+
+- `tasks/_session/events.jsonl` — append-only event log written by every gc-* script. Records batch_start/end, recon_start/end, review_start/end, autofix_start/end, dispatch_start/end with timestamps and key fields.
+- `tasks/_session/plan.md` — the conductor's plan, written and maintained by Claude (per CLAUDE.md instruction).
+- `tasks/_session/state.md` — auto-generated briefing combining the above with `git log` and `git status`. This is what Claude reads on resume.
+
+### 8.2 Manual operations
+
+```bash
+# Print the current briefing to stdout (also writes state.md)
+scripts/gc-resume.sh
+
+# Filter recent activity to the last 6 hours
+scripts/gc-resume.sh --since 6h
+
+# Update state.md silently (used by Stop hook)
+scripts/gc-resume.sh --quiet
+
+# Just print, don't touch state.md
+scripts/gc-resume.sh --no-write
+```
+
+### 8.3 Wiring the Stop hook (one-time)
+
+To make state.md regenerate automatically every turn:
+
+1. Open or create `~/.claude/settings.json` (or `.claude/settings.json` in your project for per-project config).
+2. Merge in the snippet from `examples/stop-hook-snippet.json`. Replace `<REPO_ROOT>` with the absolute path to your Claude_Conductor checkout.
+3. Restart your Claude Code session. The hook fires every time Claude finishes responding.
+
+Verify: complete one turn in any session, then `cat tasks/_session/state.md` — the file should reflect the latest events.
+
+### 8.4 What happens on a rate-limit pause
+
+```
+Claude work in flight
+   ↓
+Anthropic rate-limit hit, session interrupted
+   ↓
+Stop hook fires → gc-checkpoint.sh → gc-resume.sh --quiet
+   ↓
+tasks/_session/state.md saved with full briefing
+   ↓
+~~ wait for limit to lift (Pro plan: ~5h reset window) ~~
+   ↓
+User opens new Claude Code session
+   ↓
+CLAUDE.md instruction → Claude reads state.md and plan.md FIRST
+   ↓
+Claude resumes from the first unchecked [ ] item in plan.md
+```
+
+The user types nothing special. If the Stop hook is NOT configured, the user runs `scripts/gc-resume.sh` once at the start of the new session — same effect, one extra command.
