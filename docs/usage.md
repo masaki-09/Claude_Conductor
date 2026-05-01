@@ -164,7 +164,7 @@ scripts/gc-review.sh --staged
 | Knob | Where | When to touch |
 |---|---|---|
 | `--max-parallel N` | `gc-parallel.sh` | Default 4. Raise to 6 for many small tasks; lower to 2 if your machine or rate limits suffer. |
-| `--model NAME` | any dispatcher | Defaults: implementer=`gemini-3-flash` (cheap, fast), recon/review=`gemini-3.1-pro` (accurate). Override per-call. |
+| `--model NAME` | any dispatcher | Defaults: implementer=`gemini-3-flash-preview` (cheap, fast), recon/review=`gemini-3-pro-preview` (accurate). Override per-call. |
 | `--include path1,path2` | any dispatcher | Add directories outside cwd to the worker's reachable workspace. |
 | `--cwd path` | any dispatcher | Run workers in a different project root. Useful for monorepos or sandbox demos. |
 | `--context-file path` | `gc-parallel.sh` | Path to recon map. **Always set this** for implementer batches. |

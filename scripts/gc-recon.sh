@@ -67,7 +67,7 @@ OUT="$BATCH_DIR/recon.prompt"
   fi
 } > "$OUT"
 
-RECON_MODEL="${MODEL_OVERRIDE:-gemini-3.1-pro}"
+RECON_MODEL="${MODEL_OVERRIDE:-gemini-3-pro-preview}"
 
 echo "[gc-recon] batch dir: $BATCH_DIR (model: $RECON_MODEL)"
 "$SCRIPT_DIR/gc-parallel.sh" "$BATCH_DIR" \

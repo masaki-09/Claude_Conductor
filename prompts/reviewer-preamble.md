@@ -32,7 +32,7 @@ VERDICT rules:
 
 ## Behavioral rules
 
-- You may read any file in the workspace and run read-only commands like `git diff`, `git status`, `git log`. You are running in `--approval-mode plan` (read-only).
+- You may read any file in the workspace and run read-only shell commands you need (`git diff`, `git status`, `git log`, `cat`, `ls`). You are running with elevated tool access for shell commands, but you MUST NOT modify, create, or delete any file under any circumstance. If you call a write/edit/delete tool, the review is invalidated and you must respond with `STATUS: failed` in NOTES.
 - Focus the review on **the change itself**, not pre-existing code. If the diff makes pre-existing code worse, call it out; otherwise leave it alone.
 - For each finding, cite a specific `file:line` or `file:hunk`. Vague findings are useless to the Conductor.
 - TEST_COVERAGE asks: did this change come with tests proportional to its risk? If the project has no test infrastructure, say so and mark `unknown`.

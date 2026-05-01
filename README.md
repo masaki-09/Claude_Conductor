@@ -27,9 +27,9 @@ Three kinds of workers do the heavy lifting, with model selection tuned to each 
 
 | Worker | Purpose | Mode | Default model |
 |---|---|---|---|
-| **Recon** | Read the codebase once and produce a structured map (LAYERS, KEY_MODULES, CONVENTIONS, CHECK_COMMANDS). Replaces Claude reading source files. | read-only | `gemini-3.1-pro` |
-| **Implementer** | Do the actual edits. 4–6 in parallel by default. | write | `gemini-3-flash` |
-| **Reviewer** | Audit the diff after a batch and report BLOCKERS/WARNINGS/NITS. Replaces Claude reading code to verify. | read-only | `gemini-3.1-pro` |
+| **Recon** | Read the codebase once and produce a structured map (LAYERS, KEY_MODULES, CONVENTIONS, CHECK_COMMANDS). Replaces Claude reading source files. | read-only | `gemini-3-pro-preview` |
+| **Implementer** | Do the actual edits. 4–6 in parallel by default. | write | `gemini-3-flash-preview` |
+| **Reviewer** | Audit the diff after a batch and report BLOCKERS/WARNINGS/NITS. Replaces Claude reading code to verify. | read-only | `gemini-3-pro-preview` |
 
 Reviewers come in **four perspectives**: `general`, `security`, `perf`, `api`. Run them alone or all-at-once with `--aspects all`. With `--until-clean`, the reviewer can also drive an autoloop: review → auto-dispatch a fix worker → re-review, repeating until clean or `--max-iters` (default 3) is hit.
 

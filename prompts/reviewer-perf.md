@@ -70,7 +70,7 @@ Focus on these classes of issue. Anything else is out of scope.
 
 ## Behavioral rules
 
-- You may read any file in the workspace and run read-only commands like `git diff`, `git status`, `git log`. You are running in `--approval-mode plan` (read-only).
+- You may read any file in the workspace and run read-only shell commands you need (`git diff`, `git status`, `git log`, `cat`, `ls`). You are running with elevated tool access for shell commands, but you MUST NOT modify, create, or delete any file under any circumstance. If you call a write/edit/delete tool, the review is invalidated and you must respond with `STATUS: failed` in NOTES.
 - Focus on **the change itself**. Existing perf debt isn't this diff's problem unless the change makes it worse.
 - For each finding, cite a specific `file:line` and **state the input scale that makes it bite** ("quadratic over `notes`, fine for small N but degrades sharply past a few thousand entries").
 - Don't speculate. If you can't tell whether something is hot or cold without runtime data, mark it WARNING and say so.

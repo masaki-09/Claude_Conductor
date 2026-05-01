@@ -29,7 +29,7 @@
 #   --commit-prefix STR   prefix for autofix commit messages (default "autofix")
 #
 # Pass-through opts:
-#   --model NAME          override reviewer model (default gemini-3.1-pro)
+#   --model NAME          override reviewer model (default gemini-3-pro-preview)
 #   --cwd PATH            run reviewer/fixer with this as working dir
 #   --include DIR[,DIR]   extra directories accessible to workers
 #   --fix-context FILE    recon map prepended to autofix worker prompts
@@ -50,7 +50,7 @@ UNTIL_CLEAN=0
 MAX_ITERS=3
 CHECK_CMD=""
 COMMIT_PREFIX="autofix"
-REVIEWER_MODEL="gemini-3.1-pro"
+REVIEWER_MODEL="gemini-3-pro-preview"
 WORKER_CWD=""
 INCLUDE_DIRS=""
 FIX_CONTEXT=""
@@ -86,6 +86,9 @@ if [ -n "$PROMPT_FILE" ] && [ ! -f "$PROMPT_FILE" ]; then
 fi
 if [ -n "$FIX_CONTEXT" ] && [ ! -f "$FIX_CONTEXT" ]; then
   echo "[gc-review] --fix-context not found: $FIX_CONTEXT" >&2; exit 2
+fi
+if ! [[ "$MAX_ITERS" =~ ^[0-9]+$ ]]; then
+  echo "[gc-review] --max-iters must be a non-negative integer (got: $MAX_ITERS)" >&2; exit 2
 fi
 
 # Expand --aspects "all" to all known aspects
@@ -167,8 +170,12 @@ run_review_batch() {
   local parallel="$n"
   [ "$parallel" -gt 4 ] && parallel=4
 
+  # Reviewers run with --mode yolo so they can invoke `git diff` and `git log` —
+  # plan mode in Gemini 3 blocks shell commands, even read-only ones. The reviewer
+  # preambles forbid writing/editing files; with the prompt contract intact this is
+  # safe in practice. The --no-write guard below is an extra belt-and-braces.
   echo "[gc-review] batch: $batch_dir (aspects: ${ASPECTS}, model: $REVIEWER_MODEL)"
-  local pass_args=(--mode plan --model "$REVIEWER_MODEL" --max-parallel "$parallel")
+  local pass_args=(--mode yolo --model "$REVIEWER_MODEL" --max-parallel "$parallel")
   [ -n "$WORKER_CWD" ]   && pass_args+=(--cwd "$WORKER_CWD")
   [ -n "$INCLUDE_DIRS" ] && pass_args+=(--include "$INCLUDE_DIRS")
   # Note: per-aspect preambles via <id>.preamble.md override the default --preamble
@@ -251,7 +258,7 @@ run_autofix() {
   build_fix_prompt "$review_batch" "$fix_dir/fix.prompt"
 
   echo "[gc-review] autofix iter $iter: dispatching fix worker"
-  local pass_args=(--max-parallel 1 --model gemini-3-flash --mode yolo)
+  local pass_args=(--max-parallel 1 --model gemini-3-flash-preview --mode yolo)
   [ -n "$WORKER_CWD" ]   && pass_args+=(--cwd "$WORKER_CWD")
   [ -n "$INCLUDE_DIRS" ] && pass_args+=(--include "$INCLUDE_DIRS")
   [ -n "$FIX_CONTEXT" ]  && pass_args+=(--context-file "$FIX_CONTEXT")

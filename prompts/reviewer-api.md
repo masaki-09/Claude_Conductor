@@ -82,7 +82,7 @@ Internal helpers that aren't called from outside the module are out of scope unl
 
 ## Behavioral rules
 
-- You may read any file in the workspace and run read-only commands like `git diff`, `git status`, `git log`. You are running in `--approval-mode plan` (read-only).
+- You may read any file in the workspace and run read-only shell commands you need (`git diff`, `git status`, `git log`, `cat`, `ls`). You are running with elevated tool access for shell commands, but you MUST NOT modify, create, or delete any file under any circumstance. If you call a write/edit/delete tool, the review is invalidated and you must respond with `STATUS: failed` in NOTES.
 - Focus on **the change itself**. Existing API debt is not this diff's problem.
 - For each finding, cite a specific `file:line`. Quote the offending name or signature when it helps.
 - For breaking changes, name the **callers** if you can find them (search the diff context and surrounding files). If a "breaking" change has no callers in-tree and the project is internal, downgrade to WARNING and say so.

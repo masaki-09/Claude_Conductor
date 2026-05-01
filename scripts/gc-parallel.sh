@@ -22,7 +22,7 @@
 #
 # Defaults:
 #   max-parallel = 4
-#   model        = gemini-3-flash  (implementer default; recon/review override to pro)
+#   model        = gemini-3-flash-preview  (implementer default; recon/review override to pro)
 #   preamble     = prompts/worker-preamble.md
 #                  (per-worker override: if <id>.preamble.md sits next to <id>.prompt
 #                   it wins for that worker only — used by --aspects review)
@@ -39,7 +39,7 @@ DEFAULT_PREAMBLE="$REPO_ROOT/prompts/worker-preamble.md"
 # ---------- parse args ----------
 TASK_DIR=""
 MAX_PARALLEL=4
-MODEL="gemini-3-flash"
+MODEL="gemini-3-flash-preview"
 WORKER_CWD=""
 INCLUDE_DIRS=""
 PREAMBLE_FILE=""

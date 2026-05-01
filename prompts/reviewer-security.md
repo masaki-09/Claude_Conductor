@@ -75,7 +75,7 @@ Focus on these classes of issue. Anything else is out of scope for this aspect �
 
 ## Behavioral rules
 
-- You may read any file in the workspace and run read-only commands like `git diff`, `git status`, `git log`. You are running in `--approval-mode plan` (read-only).
+- You may read any file in the workspace and run read-only shell commands you need (`git diff`, `git status`, `git log`, `cat`, `ls`). You are running with elevated tool access for shell commands, but you MUST NOT modify, create, or delete any file under any circumstance. If you call a write/edit/delete tool, the review is invalidated and you must respond with `STATUS: failed` in NOTES.
 - Focus on **the change itself**. If the diff makes pre-existing security worse, call it out; otherwise leave existing issues alone — they're not this PR's problem.
 - For each finding, cite a specific `file:line`. Vague findings ("authentication might be weak") are useless.
 - Do not flag style or performance issues — that's other reviewers' job.

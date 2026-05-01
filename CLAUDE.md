@@ -29,9 +29,9 @@ If after a task your own token usage feels comparable to a non-Conductor session
 
 | Worker | Mode | Default model | Purpose | Script |
 |---|---|---|---|---|
-| **Recon** | read-only (`plan`) | `gemini-3.1-pro` | Map the codebase before you plan. Replaces Claude reading source files. | `scripts/gc-recon.sh` |
-| **Implementer** | write (`yolo`) | `gemini-3-flash` | Do the actual code changes. The bulk of token spend lives here. Cheap model is fine because reviewers catch slip-ups. | `scripts/gc-parallel.sh` |
-| **Reviewer** | read-only (`plan`) | `gemini-3.1-pro` | Audit the diff after a batch. Replaces Claude reading code to verify. The strong model goes here — review is where mistakes get caught. | `scripts/gc-review.sh` |
+| **Recon** | read-only (`plan`) | `gemini-3-pro-preview` | Map the codebase before you plan. Replaces Claude reading source files. | `scripts/gc-recon.sh` |
+| **Implementer** | write (`yolo`) | `gemini-3-flash-preview` | Do the actual code changes. The bulk of token spend lives here. Cheap model is fine because reviewers catch slip-ups. | `scripts/gc-parallel.sh` |
+| **Reviewer** | read-only (`plan`) | `gemini-3-pro-preview` | Audit the diff after a batch. Replaces Claude reading code to verify. The strong model goes here — review is where mistakes get caught. | `scripts/gc-review.sh` |
 
 All three return short structured summaries. The Conductor reads only those.
 
