@@ -84,7 +84,21 @@ rc=$?
 
 if [ $rc -eq 0 ] && [ -n "$OUT_PATH" ] && [ -f "$BATCH_DIR/recon.summary" ]; then
   mkdir -p "$(dirname "$OUT_PATH")"
-  cp "$BATCH_DIR/recon.summary" "$OUT_PATH"
+  {
+    # Resolve current git HEAD if available; otherwise use "no-git"
+    if git rev-parse --git-dir >/dev/null 2>&1; then
+      sha="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+      branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+    else
+      sha="no-git"
+      branch="no-git"
+    fi
+    ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "RECON_AT: $sha $ts"
+    echo "RECON_BRANCH: $branch"
+    echo
+    cat "$BATCH_DIR/recon.summary"
+  } > "$OUT_PATH"
   echo "[gc-recon] map copied to: $OUT_PATH"
 fi
 
@@ -95,6 +109,7 @@ fi
 gc_log_event recon_end \
   batch_id="$ID" \
   exit="$rc" \
-  out_path="${OUT_PATH:-none}"
+  out_path="${OUT_PATH:-none}" \
+  recon_at_sha="${sha:-unknown}"
 
 exit $rc

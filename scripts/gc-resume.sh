@@ -177,6 +177,45 @@ except Exception:
     commits = "(not a git repo)"
     status = "(n/a)"
 
+# Recon staleness check
+recon_path = os.path.join(repo_root, "tasks", "_recon", "recon.md")
+recon_stale_suggestion = None
+if os.path.isfile(recon_path):
+    recon_at_sha = None
+    recon_at_ts_str = None
+    try:
+        with open(recon_path, "r", encoding="utf-8", errors="replace") as f:
+            for _ in range(3):
+                line = f.readline()
+                if line.startswith("RECON_AT:"):
+                    parts = line.split()
+                    if len(parts) >= 3:
+                        recon_at_sha = parts[1]
+                        recon_at_ts_str = parts[2]
+                    break
+    except Exception: pass
+
+    if is_git and recon_at_sha and recon_at_sha not in ("no-git", "unknown"):
+        try:
+            c_out = subprocess.check_output(["git", "-C", repo_root, "rev-list", "--count", f"{recon_at_sha}..HEAD"], stderr=subprocess.STDOUT).decode("utf-8").strip()
+            num_commits = int(c_out)
+            f_out = subprocess.check_output(["git", "-C", repo_root, "diff", "--name-only", f"{recon_at_sha}..HEAD"], stderr=subprocess.STDOUT).decode("utf-8").strip()
+            num_files = len(f_out.splitlines()) if f_out else 0
+            
+            ts_clean = recon_at_ts_str.replace("Z", "")
+            recon_ts = datetime.datetime.strptime(ts_clean[:19], "%Y-%m-%dT%H:%M:%S")
+            age_hours = (datetime.datetime.utcnow() - recon_ts).total_seconds() / 3600.0
+
+            is_very_stale = num_commits >= 20 or age_hours >= 168 or num_files >= 30
+            is_stale = num_commits >= 5 or age_hours >= 24 or num_files >= 10
+            
+            stats = f"({num_commits} commits / {int(age_hours)}h / {num_files} files since RECON_AT)"
+            if is_very_stale:
+                recon_stale_suggestion = f"Recon map is very stale {stats}. Consider scripts/gc-recon.sh for a full re-recon."
+            elif is_stale:
+                recon_stale_suggestion = f"Recon map is stale {stats}. Consider scripts/gc-recon-delta.sh for an incremental refresh."
+        except Exception: pass
+
 # Next step heuristic
 def get_next_step():
     last_event = events[-1] if events else None
@@ -194,6 +233,8 @@ def get_next_step():
             if ev.get("verdict") in ("issues", "blocking"):
                 return "Run autofix or address findings"
             break
+    if recon_stale_suggestion:
+        return recon_stale_suggestion
     return "Plan next batch or summarize results to user"
 
 next_step = get_next_step()
