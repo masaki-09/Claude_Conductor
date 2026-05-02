@@ -164,6 +164,8 @@ Either way, `CLAUDE.md` should be present at the project root so Claude Code pic
 
 Personal tool. Open-sourced under MIT in case the pattern is useful to others. APIs and conventions may change without notice until a 1.0 tag.
 
+See [`ROADMAP.md`](ROADMAP.md) for the planned path to v1.0.0 (currently shipping v0.6.0).
+
 ## License
 
 [MIT](LICENSE)
