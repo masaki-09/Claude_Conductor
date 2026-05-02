@@ -101,6 +101,7 @@ total_workers = 0
 ok_workers = 0
 partial_workers = 0
 failed_workers = 0
+paused_workers = 0
 telemetry_missing = 0
 
 aggregated = {} # key -> {workers, prompt, completion, total, cost}
@@ -158,6 +159,7 @@ for batch_dir_name in sorted(os.listdir(tasks_dir)):
         if status == "ok": ok_workers += 1
         elif status == "partial": partial_workers += 1
         elif status == "failed": failed_workers += 1
+        elif status == "paused-quota": paused_workers += 1
         
         prompt = worker_data.get("prompt_tokens") or 0
         completion = worker_data.get("completion_tokens") or 0
@@ -169,7 +171,7 @@ for batch_dir_name in sorted(os.listdir(tasks_dir)):
             
         # Grouping key
         if group_by == "model": key = model
-        elif group_by == "status": key = status
+        elif group_by == "status": key = "paused" if status == "paused-quota" else status
         elif group_by == "batch": key = batch_dir_name
         elif group_by == "day": 
             started = worker_data.get("started_at", "")
@@ -210,6 +212,7 @@ if output_json:
             "ok": ok_workers,
             "partial": partial_workers,
             "failed": failed_workers,
+            "paused": paused_workers,
             "telemetry_coverage": f"{total_workers - telemetry_missing}/{total_workers}"
         },
         "breakdown_by": group_by,
@@ -230,7 +233,7 @@ else:
     
     print(f"Period: {period} (last {since_str})" if not since_batch else f"Period: {period} (since batch {since_batch})")
     print(f"Batches: {len(batches)} ({type_str})")
-    print(f"Workers: {ok_workers} ok, {partial_workers} partial, {failed_workers} failed")
+    print(f"Workers: {ok_workers} ok, {partial_workers} partial, {failed_workers} failed, {paused_workers} paused")
     coverage_pct = (100 * (total_workers - telemetry_missing) // total_workers) if total_workers > 0 else 0
     print(f"Telemetry coverage: {total_workers - telemetry_missing}/{total_workers} workers ({coverage_pct}%)")
     print("")
@@ -258,5 +261,8 @@ else:
     
     if telemetry_missing > 0:
         print(f"\n({telemetry_missing} workers had no usage data — actual cost may be higher)")
+
+    if paused_workers > 0:
+        print(f"note: {paused_workers} worker(s) paused awaiting Gemini quota reset. Run scripts/gc-resume-workers.sh --all to retry once the window passes.")
 
 EOF

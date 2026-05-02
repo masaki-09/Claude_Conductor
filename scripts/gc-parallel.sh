@@ -204,6 +204,7 @@ run_worker() {
 
   local pushd_dir="${WORKER_CWD:-$PWD}"
   local TRANSIENT_RX='429|RESOURCE_EXHAUSTED|QUOTA_EXHAUSTED|UNAVAILABLE|INTERNAL|DEADLINE_EXCEEDED|gaxios-gaxios-error.*5\d\d'
+  local HARD_LIMIT_RX='TerminalQuotaError|Your quota will reset after|retryDelayMs:|retry":\s*false'
 
   echo "[gc-parallel] start  $id" >&2
   local rc=0
@@ -262,6 +263,21 @@ run_worker() {
   rm -f "$combined"
   echo "$rc" > "$exitcode_file"
 
+  # Detect hard rate limits that warrant a pause instead of simple failure
+  local is_hard_limit=0
+  if [ $rc -ne 0 ] && grep -qE "$HARD_LIMIT_RX" "$log_file"; then
+    if grep -qE "TerminalQuotaError|Your quota will reset after" "$log_file"; then
+      is_hard_limit=1
+    elif grep -q "retryDelayMs" "$log_file"; then
+      local delay_ms; delay_ms=$(grep -oE "retryDelayMs:[[:space:]]*[0-9]+" "$log_file" | awk -F: '{print $2}' | tr -d '[:space:]')
+      if [ -n "$delay_ms" ] && [ "$delay_ms" -gt 600000 ]; then
+        is_hard_limit=1
+      fi
+    elif grep -q "QUOTA_EXHAUSTED" "$log_file" && grep -qE '"retry":[[:space:]]*false' "$log_file"; then
+      is_hard_limit=1
+    fi
+  fi
+
   # Extract text and telemetry from JSON log
   local text_file="$TASK_DIR/$id.text"
   local usage_file="$TASK_DIR/$id.usage.json"
@@ -310,20 +326,20 @@ except Exception as e:
             f.write(f'ERROR: {str(e)}\\n')
 " "$id" "$TASK_DIR" "$log_file" "$text_file" "$usage_file" "$started_at" "$completed_at" "$duration" "$rc" "$attempt" "$used_fallback" 2>/dev/null || true
 
-  # Extract summary: prefer the marker block emitted by the preamble.
-  # Implementers/recon use STATUS:; reviewer uses VERDICT:. Accept either.
-  if grep -nE '^(STATUS|VERDICT):[[:space:]]' "$text_file" > /dev/null 2>&1; then
-    awk '/^(STATUS|VERDICT):[[:space:]]/{p=1} p{print}' "$text_file" | tail -c 4096 > "$summary_file"
-  else
-    {
-      echo "STATUS: unknown (no STATUS/VERDICT marker in worker output)"
-      echo "--- output tail ---"
-      tail -n 30 "$text_file" 2>/dev/null || tail -n 30 "$log_file"
-    } > "$summary_file"
-  fi
-
   local final_status="unknown"
   if [ "$rc" -eq 0 ]; then
+    # Extract summary: prefer the marker block emitted by the preamble.
+    # Implementers/recon use STATUS:; reviewer uses VERDICT:. Accept either.
+    if grep -nE '^(STATUS|VERDICT):[[:space:]]' "$text_file" > /dev/null 2>&1; then
+      awk '/^(STATUS|VERDICT):[[:space:]]/{p=1} p{print}' "$text_file" | tail -c 4096 > "$summary_file"
+    else
+      {
+        echo "STATUS: unknown (no STATUS/VERDICT marker in worker output)"
+        echo "--- output tail ---"
+        tail -n 30 "$text_file" 2>/dev/null || tail -n 30 "$log_file"
+      } > "$summary_file"
+    fi
+
     # Map both schemas onto a single status vocabulary: ok / partial / failed.
     if   grep -qE '^STATUS:[[:space:]]*ok'        "$summary_file"; then final_status="ok"
     elif grep -qE '^VERDICT:[[:space:]]*clean'    "$summary_file"; then final_status="ok"
@@ -335,8 +351,62 @@ except Exception as e:
     if [ "$used_fallback" -eq 1 ] && [[ "$final_status" =~ ^(ok|partial)$ ]]; then
       final_status="${final_status}-fallback"
     fi
+  elif [ "$is_hard_limit" -eq 1 ]; then
+    final_status="paused-quota"
+    python -c "
+import json, sys, os, re, datetime
+jid, t_dir, log_f, p_f, pre_f, ctx_f, model, mode, cwd, incs, paused, atts = sys.argv[1:]
+with open(log_f, 'r', encoding='utf-8', errors='ignore') as f: log = f.read()
+ra = None
+m1 = re.search(r'Your quota will reset after (\d+)h(\d+)m(\d+)s', log)
+if m1: h, m, s = map(int, m1.groups()); ra = h*3600 + m*60 + s
+else:
+    m2 = re.search(r'retryDelayMs:\s*(\d+)', log)
+    if m2: ra = int(m2.group(1)) // 1000
+er = None
+if ra:
+    try:
+        dt = datetime.datetime.fromisoformat(paused.replace('Z', '+00:00'))
+        er = (dt + datetime.timedelta(seconds=ra)).isoformat().replace('+00:00', 'Z')
+    except: pass
+exc = ''
+sigs = ['TerminalQuotaError', 'Your quota will reset after', 'retryDelayMs', '\"retry\": false']
+ls = log.splitlines()
+for i, l in enumerate(ls):
+    if any(s in l for s in sigs): exc = ' '.join(ls[i:i+4])[:200]; break
+pd = {
+    'id': jid, 'batch_id': os.path.basename(t_dir.rstrip('/\\\\')), 'task_dir': os.path.abspath(t_dir),
+    'prompt_file': os.path.abspath(p_f), 'preamble_file': os.path.abspath(pre_f),
+    'context_file': os.path.abspath(ctx_f) if (ctx_f and os.path.exists(ctx_f)) else None,
+    'model': model, 'mode': mode, 'cwd': os.path.abspath(cwd) if cwd else None,
+    'include_dirs': incs if incs else None, 'paused_at': paused, 'reset_after_seconds': ra,
+    'estimated_resume_at': er, 'attempts': int(atts), 'last_error_excerpt': exc
+}
+with open(os.path.join(t_dir, jid + '.pause.json'), 'w', encoding='utf-8') as f: json.dump(pd, f, indent=2)
+print(er or 'unknown')
+" "$id" "$TASK_DIR" "$log_file" "$prompt_file" "$effective_preamble" "$CONTEXT_FILE" "$final_model" "$MODE" "$WORKER_CWD" "$INCLUDE_DIRS" "$completed_at" "$attempt" > "$TASK_DIR/$id.resume_at" 2>/dev/null || true
+
+    estimated_resume_at=$(cat "$TASK_DIR/$id.resume_at" 2>/dev/null || echo "unknown")
+    rm -f "$TASK_DIR/$id.resume_at"
+
+    {
+      echo "STATUS: paused-quota"
+      echo "FILES: (none — worker did not produce output)"
+      echo "NOTES: Hit hard rate limit. Resume after $estimated_resume_at using scripts/gc-resume-workers.sh tasks/$(basename "$TASK_DIR")."
+    } > "$summary_file"
+
+    gc_log_event worker_paused \
+      batch_id="$(basename "$TASK_DIR")" \
+      worker_id="$id" \
+      model="$final_model" \
+      estimated_resume_at="$estimated_resume_at"
   else
     final_status="failed (exit=$rc)"
+    {
+      echo "STATUS: failed (exit=$rc)"
+      echo "--- output tail ---"
+      tail -n 30 "$text_file" 2>/dev/null || tail -n 30 "$log_file"
+    } > "$summary_file"
   fi
   echo "$final_status" > "$status_file"
 
@@ -406,6 +476,7 @@ echo "[gc-parallel] batch complete: $TASK_DIR"
 ok_count=0
 partial_count=0
 fail_count=0
+pause_count=0
 for f in "${PROMPT_FILES[@]}"; do
   id="$(basename "$f" .prompt)"
   status="$(cat "$TASK_DIR/$id.status" 2>/dev/null || echo unknown)"
@@ -416,6 +487,9 @@ for f in "${PROMPT_FILES[@]}"; do
       partial_count=$((partial_count + 1))
       fail_count=$((fail_count + 1))
       ;;
+    paused-quota)
+      pause_count=$((pause_count + 1))
+      ;;
     *) fail_count=$((fail_count + 1)) ;;
   esac
 done
@@ -425,10 +499,15 @@ gc_log_event batch_end \
   exit="$fail_count" \
   ok="$ok_count" \
   partial="$partial_count" \
-  failed="$fail_count"
+  failed="$fail_count" \
+  paused="$pause_count"
 
 if [ "$fail_count" -gt 0 ]; then
   echo "[gc-parallel] $fail_count worker(s) not ok — inspect the corresponding *.summary and only fall back to *.log if needed." >&2
   exit 1
+fi
+if [ "$pause_count" -gt 0 ]; then
+  echo "[gc-parallel] $pause_count worker(s) paused due to rate limits. Resume with gc-resume.sh." >&2
+  exit 4
 fi
 exit 0

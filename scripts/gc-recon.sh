@@ -54,6 +54,7 @@ if [ -n "$PROMPT_FILE" ] && [ ! -f "$PROMPT_FILE" ]; then
 fi
 
 ID="recon-$(date +%Y%m%d-%H%M%S)-$$"
+RECON_MODEL="${MODEL_OVERRIDE:-gemini-3-pro-preview}"
 gc_log_event recon_start \
   batch_id="$ID" \
   out_path="${OUT_PATH:-none}" \
@@ -71,8 +72,6 @@ OUT="$BATCH_DIR/recon.prompt"
     echo "Recon the entire project workspace. No focus area specified — produce a balanced map covering all top-level layers."
   fi
 } > "$OUT"
-
-RECON_MODEL="${MODEL_OVERRIDE:-gemini-3-pro-preview}"
 
 echo "[gc-recon] batch dir: $BATCH_DIR (model: $RECON_MODEL)"
 "$SCRIPT_DIR/gc-parallel.sh" "$BATCH_DIR" \
