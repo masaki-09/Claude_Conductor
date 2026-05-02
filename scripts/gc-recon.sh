@@ -55,6 +55,8 @@ fi
 
 ID="recon-$(date +%Y%m%d-%H%M%S)-$$"
 RECON_MODEL="${MODEL_OVERRIDE:-gemini-3-pro-preview}"
+sha="unknown"
+branch="unknown"
 gc_log_event recon_start \
   batch_id="$ID" \
   out_path="${OUT_PATH:-none}" \

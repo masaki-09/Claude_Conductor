@@ -9,6 +9,9 @@
 #   gc-recon-delta.sh --force                      # skip the staleness checks (refresh even on small diffs)
 #   gc-recon-delta.sh --suggest-full               # if delta would touch >N files (default 30), exit 0
 #   gc-recon-delta.sh --model <name>               # override delta worker model (default gemini-3-flash-preview)
+#   gc-recon-delta.sh --retries N                  # per-worker retries on transient failures (passthrough)
+#   gc-recon-delta.sh --retry-on PATTERN           # extra regex for retry trigger (passthrough)
+#   gc-recon-delta.sh --fallback-model NAME        # final attempt model on persistent failure (passthrough)
 #   gc-recon-delta.sh --dry-run                    # show what would happen, don't dispatch
 #   gc-recon-delta.sh --help
 
@@ -44,7 +47,7 @@ while [ $# -gt 0 ]; do
     --retry-on)     RETRY_ON="$2"; shift 2 ;;
     --fallback-model) FALLBACK_MODEL="$2"; shift 2 ;;
     -h|--help)
-      sed -n '2,13p' "$0"
+      sed -n '2,16p' "$0"
       exit 0
       ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
@@ -98,7 +101,11 @@ fi
 DIFF_NAME_STATUS=$(git diff --name-status "$SINCE_SHA")
 DIFF_LOG=$(git log --oneline "$SINCE_SHA"..HEAD)
 DIFF_SHORTSTAT=$(git diff --shortstat "$SINCE_SHA")
-FILES_CHANGED=$(echo "$DIFF_NAME_STATUS" | grep -c '^' || echo 0)
+if [ -z "$DIFF_NAME_STATUS" ]; then
+  FILES_CHANGED=0
+else
+  FILES_CHANGED=$(printf '%s' "$DIFF_NAME_STATUS" | grep -c '^')
+fi
 
 # 6. Suggest full recon
 if [ "$SUGGEST_FULL" = true ] && [ "$FILES_CHANGED" -gt 30 ]; then
