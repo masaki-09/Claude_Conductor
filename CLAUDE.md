@@ -35,6 +35,16 @@ If after a task your own token usage feels comparable to a non-Conductor session
 
 All three return short structured summaries. The Conductor reads only those.
 
+## Recon Refresh (v0.7)
+
+1. **Automatic versioning.** Recon maps now carry a `RECON_AT: <sha> <iso>` header automatically. You don't need to manage this; it appears in the first two lines of your recon map (e.g., `tasks/_recon/recon.md`).
+2. **Staleness-driven updates.** When the briefing's "Suggested next step" says the recon is stale, follow the heuristic:
+   - **Stale** (≥5 commits / ≥24h) → `scripts/gc-recon-delta.sh` (cheap incremental update; reuses existing map).
+   - **Very stale** (≥20 commits / ≥7d) → `scripts/gc-recon.sh --out tasks/_recon/recon.md` (full re-recon; throw away old map).
+3. **Manual triggers.** If you've made significant additions you want reflected before the next batch, run delta proactively. Default model is flash; pass `--model gemini-3-pro-preview` if the diff is conceptually heavy.
+4. **Branch caveat.** Delta uses the existing map's `RECON_BRANCH`. If you've switched branches mid-session, the delta will warn but proceed. If the switch was major, do a full re-recon instead.
+5. **Cost intuition.** Delta is roughly 10-30% the token cost of full recon, depending on diff size. The cost crosses over at ~30 files changed; that's where `--suggest-full` recommends a full re-recon.
+
 Reviewers come in **four perspectives** (run alone or in parallel):
 - `general` — overall correctness, tests, conventions (default)
 - `security` — injection, secrets, auth, crypto, SSRF, supply chain

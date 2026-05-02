@@ -336,3 +336,57 @@ The hard-limit regex inside `gc-parallel.sh` matches:
 
 If your environment surfaces a different quota string, you can extend by setting an env var or editing the script (currently no flag — file an issue or PR if your error format differs).
 
+## 10. Recon delta (v0.7)
+
+### 10.1 What it is
+
+When the project changes faster than your recon map, you have two options: rerun the full recon (expensive) or run a delta update (cheap). v0.7 ships the delta path.
+
+### 10.2 The map header
+
+Maps written by `gc-recon.sh --out <path>` now start with two metadata lines:
+
+```
+RECON_AT: <40-char-sha> <ISO 8601 UTC>
+RECON_BRANCH: <branch-name>
+
+STATUS: ok
+PROJECT_KIND: ...
+...
+```
+
+These are added by `gc-recon.sh` post-worker; the worker itself doesn't know about them. Pre-v0.7 maps without the header still work — they just can't drive a delta until you do a full re-recon to refresh them.
+
+### 10.3 Running delta
+
+```bash
+scripts/gc-recon-delta.sh                                        # default: tasks/_recon/recon.md
+scripts/gc-recon-delta.sh --map tasks/_recon/myproject.md        # explicit map
+scripts/gc-recon-delta.sh --out tasks/_recon/v8.md               # write to a new path
+scripts/gc-recon-delta.sh --since abc123                         # override baseline sha
+scripts/gc-recon-delta.sh --force                                # ignore "no changes since recon"
+scripts/gc-recon-delta.sh --suggest-full                         # bail out if >30 files; recommend full
+scripts/gc-recon-delta.sh --dry-run                              # show what would happen
+```
+
+### 10.4 When to use delta vs full
+
+| Situation | Use |
+|---|---|
+| First recon for a project | full (`gc-recon.sh`) |
+| 1-10 files changed since last recon | delta |
+| 10-30 files changed | delta if changes are isolated; full if cross-cutting |
+| >30 files changed | full (delta is roughly the same cost as full at that point) |
+| Branch switch | full |
+| Fresh checkout / new repo | full |
+
+The conductor (Claude) decides via `gc-resume.sh`'s suggestion when the briefing says "stale" / "very stale".
+
+### 10.5 Cost intuition
+
+Delta only sees: existing map (~3KB) + diff names + commit log + a target schema. The worker's output is the updated map (~3KB). Compare to full recon which scans the entire tree.
+
+Rough numbers (flash, `gemini-3-flash-preview`):
+- Full recon of this repo (~25 files): ~25k input / 800 output tokens
+- Delta with 5 files changed: ~5k input / 600 output tokens
+

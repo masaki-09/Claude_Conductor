@@ -37,14 +37,15 @@ A simplified plan toward the official 1.0 release. Each minor version focuses on
 - `gc-resume-workers.sh` (manual replay) + `gc-watch.sh` (always-on auto-resume)
 - `gc-parallel.sh` exit code 4 = paused-only (distinct from 1 = failed)
 
-## Planned
-
 ### v0.7 — Recon delta
 **Theme**: cheap incremental project-map updates so long sessions don't re-scan from scratch.
 - New `scripts/gc-recon-delta.sh`
 - Recon map gets a `RECON_AT: <git-sha>` header
 - Delta worker reads existing map + `git diff <sha>..HEAD` and emits an updated map
 - Auto-trigger heuristic: if `RECON_AT` is more than N commits old, suggest delta
+- Shipped 2026-05-02
+
+## Planned
 
 ### v0.8 — Policy-driven reviewer (true read-only)
 **Theme**: replace the `--mode yolo` + preamble no-write workaround with a Gemini Policy Engine declaration.

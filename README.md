@@ -54,6 +54,20 @@ Gemini Pro daily quota can hard-pause a multi-batch session for hours. Without v
 - **`gc-resume-workers.sh`** — replays paused workers when their reset window has passed, on demand.
 - **`gc-watch.sh`** — optional always-on watcher that auto-resumes paused workers (run with `nohup` or in `tmux`/`screen`).
 
+## v0.7 — Recon delta
+
+Long sessions cause the initial recon map to drift from the actual state of the codebase. Re-running a full recon every batch is wasteful (25k+ tokens). v0.7 introduces incremental updates:
+
+- **Versioned maps** — every recon map records `RECON_AT: <sha>` so future tools can compute the delta.
+- **`gc-recon-delta.sh`** — incremental update. Reads the existing map, sees `git diff <sha>..HEAD`, and asks the delta worker to refresh only what changed.
+- **Staleness hint** — `gc-resume.sh`'s briefing tells the conductor when a delta or full re-recon is due based on commit volume and time.
+
+```bash
+scripts/gc-recon-delta.sh                # auto: refresh tasks/_recon/recon.md
+scripts/gc-recon-delta.sh --suggest-full # bail out if too many files changed (>30)
+scripts/gc-recon-delta.sh --since <sha>  # explicit baseline
+```
+
 ### Setup (optional)
 
 ```bash
