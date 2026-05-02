@@ -176,6 +176,18 @@ Each worker now leaves these files in its batch directory:
 
 The `-fallback` suffix on a status means the worker only succeeded after `--fallback-model` engaged. Treat it as success but log it — repeated fallbacks indicate the primary model is wrong-sized for the task.
 
+## Gemini Rate-Limit Resilience (v0.6)
+
+### How to handle paused workers
+
+1. **New status**: `paused-quota` is NOT a failure. It means a worker hit a hard-rate-limit (Pro daily quota etc.) and was preserved for resumption. Treat it as "in-flight, awaiting quota reset".
+2. **Resumption**:
+   - Decision A: continue with other batches that don't depend on the paused work; resumed workers' artifacts will appear later.
+   - Decision B: invoke `scripts/gc-resume-workers.sh tasks/<batch>` (or `--all`) to retry now (with `--force` if you want to skip the time check).
+   - You generally do NOT need to invoke this manually — `scripts/gc-watch.sh` (if running) does it on a 5-minute cadence.
+3. **Artifacts**: The `paused-quota` status persists in `<id>.status` file content, and `<id>.pause.json` carries the re-dispatch metadata. Once resumed successfully, those files are overwritten with the normal artifacts and the pause.json is archived as `<id>.pause.json.resumed-<ts>`.
+4. **Exit code 4**: `gc-parallel.sh` (and downstream `gc-review.sh` autoloop) exits 4 when there are paused-but-no-failed workers. Don't treat exit 4 as a fatal error.
+
 ## Session Resume (v0.5)
 
 ### What you do at session start

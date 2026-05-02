@@ -280,3 +280,59 @@ Claude resumes from the first unchecked [ ] item in plan.md
 ```
 
 The user types nothing special. If the Stop hook is NOT configured, the user runs `scripts/gc-resume.sh` once at the start of the new session — same effect, one extra command.
+
+## 9. Gemini quota pause & auto-resume (v0.6)
+
+### 9.1 What it is
+
+If a Gemini Pro daily quota exhausts mid-batch, that worker's run is captured as `paused-quota` instead of `failed`. v0.6 ships two scripts that resume paused workers later: `gc-resume-workers.sh` (manual one-shot) and `gc-watch.sh` (always-on).
+
+### 9.2 Indicators
+
+After a batch, look for these:
+- `gc-stats.sh` output has a `paused` bucket with count > 0.
+- `<id>.status` file contains `paused-quota`.
+- `<id>.pause.json` exists in the batch dir.
+- The batch's exit code was 4 (paused-only) instead of 0.
+
+### 9.3 Manual resume
+
+```bash
+# Dry-run: see what's eligible
+scripts/gc-resume-workers.sh --all --dry-run
+
+# Resume eligible workers in one batch
+scripts/gc-resume-workers.sh tasks/<batch-id>
+
+# Resume across all batches
+scripts/gc-resume-workers.sh --all
+
+# Force-retry even if estimated_resume_at hasn't passed (use cautiously — may hit limit again)
+scripts/gc-resume-workers.sh tasks/<batch-id> --force
+```
+
+### 9.4 Always-on watcher
+
+```bash
+# Foreground (recommended in tmux/screen)
+scripts/gc-watch.sh --interval 600
+
+# One-shot for cron
+scripts/gc-watch.sh --once
+
+# Bounded runtime (auto-exit after 24h)
+scripts/gc-watch.sh --max-runtime 86400
+```
+
+The watcher emits `watch_start` / `watch_tick` / `watch_stop` to `tasks/_session/events.jsonl`, so `gc-resume.sh` will surface it in the briefing.
+
+### 9.5 Tuning the detection
+
+The hard-limit regex inside `gc-parallel.sh` matches:
+- `TerminalQuotaError`
+- `Your quota will reset after \d+h`
+- `retryDelayMs > 600000` (10 min)
+- `QUOTA_EXHAUSTED` with `retry: false`
+
+If your environment surfaces a different quota string, you can extend by setting an env var or editing the script (currently no flag — file an issue or PR if your error format differs).
+

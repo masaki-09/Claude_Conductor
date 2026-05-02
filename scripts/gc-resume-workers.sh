@@ -241,6 +241,9 @@ for k, v in d.items():
   RESUME_RESULTS+=("  $RES_BATCH_ID/$RES_ID     resumed (status: $NEW_STATUS)")
   
   [[ "$NEW_STATUS" == "paused-quota" ]] && ANY_HIT_HARD_LIMIT=true
+
+  # Cleanup worker-specific temp dir
+  rm -rf "$WORKER_TEMP_DIR"
 done
 
 # Final Summary Table

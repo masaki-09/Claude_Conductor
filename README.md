@@ -46,6 +46,23 @@ Long-running agentic sessions often hit Claude's rate limits or context pressure
 - **On-demand briefing**: `scripts/gc-resume.sh` aggregates the log, git state, and your `plan.md` into a single `state.md` briefing.
 - **Auto-checkpoint**: `scripts/gc-checkpoint.sh` can be wired to Claude Code's "Stop" hook to automatically regenerate the briefing at the end of every turn.
 
+## v0.6 — Gemini-side rate-limit resilience
+
+Gemini Pro daily quota can hard-pause a multi-batch session for hours. Without v0.6, those workers were marked failed and lost. Version 0.6 adds:
+
+- **Hard-limit detection** — workers that hit a quota cap are saved as `paused-quota` with re-dispatch metadata, not destroyed.
+- **`gc-resume-workers.sh`** — replays paused workers when their reset window has passed, on demand.
+- **`gc-watch.sh`** — optional always-on watcher that auto-resumes paused workers (run with `nohup` or in `tmux`/`screen`).
+
+### Setup (optional)
+
+```bash
+# In tmux/screen: keep a watcher running for the session
+scripts/gc-watch.sh --interval 600
+# Or one-shot:
+scripts/gc-resume-workers.sh --all
+```
+
 ### Setup (Stop hook)
 
 To enable auto-checkpointing, add the following to your `~/.claude/settings.json` (replace `/path/to/conductor` with the absolute path to this repo):

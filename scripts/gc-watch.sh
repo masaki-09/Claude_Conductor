@@ -123,7 +123,8 @@ while [ "$RUNNING" -eq 1 ]; do
   ELIGIBLE_OUTPUT=$(bash "$RESUME_SCRIPT" --all --dry-run 2>&1) || true
   
   # Extract count. Expecting "[gc-resume-workers] eligible: N"
-  N=$(echo "$ELIGIBLE_OUTPUT" | grep -oE '^\[gc-resume-workers\] eligible: [0-9]+' | grep -oE '[0-9]+' || echo "0")
+  N=$(echo "$ELIGIBLE_OUTPUT" | sed -n 's/^\[gc-resume-workers\] eligible: \([0-9]\+\)$/\1/p' | head -n 1)
+  [[ -z "$N" ]] && N="0"
   
   NEXT_TS=""
   if [ "$ONCE" -eq 0 ]; then
