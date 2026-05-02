@@ -122,8 +122,8 @@ while [ "$RUNNING" -eq 1 ]; do
   # 1. Dry run to count eligible
   ELIGIBLE_OUTPUT=$(bash "$RESUME_SCRIPT" --all --dry-run 2>&1) || true
   
-  # Extract count. Expecting something like "Found 2 workers" or just "2".
-  N=$(echo "$ELIGIBLE_OUTPUT" | grep -oE '[0-9]+' | head -n1 || echo "0")
+  # Extract count. Expecting "[gc-resume-workers] eligible: N"
+  N=$(echo "$ELIGIBLE_OUTPUT" | grep -oE '^\[gc-resume-workers\] eligible: [0-9]+' | grep -oE '[0-9]+' || echo "0")
   
   NEXT_TS=""
   if [ "$ONCE" -eq 0 ]; then

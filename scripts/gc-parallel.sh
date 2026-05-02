@@ -326,20 +326,24 @@ except Exception as e:
             f.write(f'ERROR: {str(e)}\\n')
 " "$id" "$TASK_DIR" "$log_file" "$text_file" "$usage_file" "$started_at" "$completed_at" "$duration" "$rc" "$attempt" "$used_fallback" 2>/dev/null || true
 
+  # Extract summary: prefer the marker block emitted by the preamble.
+  # Implementers/recon use STATUS:; reviewer uses VERDICT:. Accept either.
+  if grep -nE '^(STATUS|VERDICT):[[:space:]]' "$text_file" > /dev/null 2>&1; then
+    awk '/^(STATUS|VERDICT):[[:space:]]/{p=1} p{print}' "$text_file" | tail -c 4096 > "$summary_file"
+  else
+    {
+      if [ "$rc" -eq 0 ]; then
+        echo "STATUS: unknown (no STATUS/VERDICT marker in worker output)"
+      else
+        echo "STATUS: failed (exit=$rc)"
+      fi
+      echo "--- output tail ---"
+      tail -n 30 "$text_file" 2>/dev/null || tail -n 30 "$log_file"
+    } > "$summary_file"
+  fi
+
   local final_status="unknown"
   if [ "$rc" -eq 0 ]; then
-    # Extract summary: prefer the marker block emitted by the preamble.
-    # Implementers/recon use STATUS:; reviewer uses VERDICT:. Accept either.
-    if grep -nE '^(STATUS|VERDICT):[[:space:]]' "$text_file" > /dev/null 2>&1; then
-      awk '/^(STATUS|VERDICT):[[:space:]]/{p=1} p{print}' "$text_file" | tail -c 4096 > "$summary_file"
-    else
-      {
-        echo "STATUS: unknown (no STATUS/VERDICT marker in worker output)"
-        echo "--- output tail ---"
-        tail -n 30 "$text_file" 2>/dev/null || tail -n 30 "$log_file"
-      } > "$summary_file"
-    fi
-
     # Map both schemas onto a single status vocabulary: ok / partial / failed.
     if   grep -qE '^STATUS:[[:space:]]*ok'        "$summary_file"; then final_status="ok"
     elif grep -qE '^VERDICT:[[:space:]]*clean'    "$summary_file"; then final_status="ok"
@@ -375,8 +379,9 @@ ls = log.splitlines()
 for i, l in enumerate(ls):
     if any(s in l for s in sigs): exc = ' '.join(ls[i:i+4])[:200]; break
 pd = {
-    'id': jid, 'batch_id': os.path.basename(t_dir.rstrip('/\\\\')), 'task_dir': os.path.abspath(t_dir),
+    'id': jid, 'batch_id': os.environ.get('GC_BATCH_ID_OVERRIDE') or os.path.basename(t_dir.rstrip('/\\\\')), 'task_dir': os.path.abspath(t_dir),
     'prompt_file': os.path.abspath(p_f), 'preamble_file': os.path.abspath(pre_f),
+
     'context_file': os.path.abspath(ctx_f) if (ctx_f and os.path.exists(ctx_f)) else None,
     'model': model, 'mode': mode, 'cwd': os.path.abspath(cwd) if cwd else None,
     'include_dirs': incs if incs else None, 'paused_at': paused, 'reset_after_seconds': ra,
@@ -402,13 +407,9 @@ print(er or 'unknown')
       estimated_resume_at="$estimated_resume_at"
   else
     final_status="failed (exit=$rc)"
-    {
-      echo "STATUS: failed (exit=$rc)"
-      echo "--- output tail ---"
-      tail -n 30 "$text_file" 2>/dev/null || tail -n 30 "$log_file"
-    } > "$summary_file"
   fi
   echo "$final_status" > "$status_file"
+
 
   # Finalize usage file with the determined status
   python -c "
@@ -507,7 +508,7 @@ if [ "$fail_count" -gt 0 ]; then
   exit 1
 fi
 if [ "$pause_count" -gt 0 ]; then
-  echo "[gc-parallel] $pause_count worker(s) paused due to rate limits. Resume with gc-resume.sh." >&2
+  echo "[gc-parallel] $pause_count worker(s) paused due to rate limits. Resume with scripts/gc-resume-workers.sh." >&2
   exit 4
 fi
 exit 0

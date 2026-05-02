@@ -156,6 +156,10 @@ for batch_dir_name in sorted(os.listdir(tasks_dir)):
             
         total_workers += 1
         status = worker_data.get("status", "unknown")
+        # Normalize status: strip (exit=N) suffix and -fallback suffix
+        status = re.sub(r'\s*\([^)]*\)', '', status)
+        status = re.sub(r'-fallback$', '', status)
+
         if status == "ok": ok_workers += 1
         elif status == "partial": partial_workers += 1
         elif status == "failed": failed_workers += 1

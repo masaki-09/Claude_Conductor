@@ -91,7 +91,11 @@ done
 shopt -u nullglob
 
 if [[ ${#PAUSE_FILES[@]} -eq 0 ]]; then
-  echo "no paused workers"
+  if [[ "$DRY_RUN" == "true" ]]; then
+    echo "[gc-resume-workers] eligible: 0"
+  else
+    echo "no paused workers"
+  fi
   exit 0
 fi
 
@@ -208,7 +212,7 @@ for k, v in d.items():
   [[ -n "$RES_INCLUDE_DIRS" ]] && PARALLEL_ARGS+=( "--include" "$RES_INCLUDE_DIRS" )
 
   # Execute
-  "$REPO_ROOT/scripts/gc-parallel.sh" "${PARALLEL_ARGS[@]}" >/dev/null 2>&1
+  GC_BATCH_ID_OVERRIDE="$RES_BATCH_ID" "$REPO_ROOT/scripts/gc-parallel.sh" "${PARALLEL_ARGS[@]}" >/dev/null 2>&1
   RES_RC=$?
   
   NEW_STATUS="unknown"
@@ -221,9 +225,15 @@ for k, v in d.items():
     fi
   done
   
-  # Mark pause file as resumed
-  TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-  mv "$pause_json" "$pause_json.resumed-$TIMESTAMP"
+  # BLOCKER 1: Handle re-pause vs completion
+  if [[ -f "$WORKER_TEMP_DIR/$RES_ID.pause.json" ]]; then
+    # Re-paused: copy new pause.json back, overwrite original, DO NOT archive
+    cp "$WORKER_TEMP_DIR/$RES_ID.pause.json" "$pause_json"
+  else
+    # Completed (or failed without re-pause): archive original
+    TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+    mv "$pause_json" "$pause_json.resumed-$TIMESTAMP"
+  fi
 
   # Telemetry
   gc_log_event worker_resumed batch_id="$RES_BATCH_ID" worker_id="$RES_ID" exit="$RES_RC" status="$NEW_STATUS"
@@ -235,10 +245,23 @@ done
 
 # Final Summary Table
 if [[ "$PROCESSED_COUNT" -gt 0 ]]; then
+  if [[ "$DRY_RUN" == "true" ]]; then
+    ELIGIBLE_COUNT=0
+    for res in "${RESUME_RESULTS[@]}"; do
+      [[ "$res" == *"WOULD resume"* ]] && ELIGIBLE_COUNT=$((ELIGIBLE_COUNT + 1))
+    done
+    echo "[gc-resume-workers] eligible: $ELIGIBLE_COUNT"
+  fi
+
   echo "[gc-resume-workers] processed $PROCESSED_COUNT paused worker(s):"
   for line in "${RESUME_RESULTS[@]}"; do
     echo "$line"
   done
+fi
+
+# NIT 6: Cleanup temp dir
+if [[ -n "$TEMP_TASK_DIR" && -d "$TEMP_TASK_DIR" ]]; then
+  rm -rf "$TEMP_TASK_DIR"
 fi
 
 # Exit code: 0 if at least one resumed successfully OR all were "not yet eligible".

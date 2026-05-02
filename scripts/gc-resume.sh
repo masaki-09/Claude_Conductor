@@ -182,6 +182,9 @@ def get_next_step():
     last_event = events[-1] if events else None
     if last_event and last_event.get("event") == "batch_end" and last_event.get("failed", 0) > 0:
         return f"Investigate failed worker(s) in {last_event.get('batch_id', '?')}"
+    # Suggest resumption if workers are paused-quota
+    if last_event and last_event.get("event") == "batch_end" and last_event.get("paused", 0) > 0 and last_event.get("failed", 0) == 0:
+        return f"{last_event.get('paused')} workers awaiting Gemini quota reset. Run scripts/gc-resume-workers.sh --all (or wait for gc-watch.sh)."
     if "[ ]" in plan_content:
         return "Continue with first unchecked plan item"
     if is_git and status != "(clean)":
